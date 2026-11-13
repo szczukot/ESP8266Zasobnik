@@ -96,8 +96,10 @@ struct TxCommand
 	uint16_t val;
 	uint8_t gapMs;
 	unsigned long since;
+	bool isClock;      // zegar: wartosc liczona w chwili wysylki, na poczatku minuty
 };
-TxCommand txCmd = { false, 0, 0, 0, 0, 0 };
+TxCommand txCmd = { false, 0, 0, 0, 0, 0, false };
+time_t clockRecvTime = 0; // kiedy (wg NTP) przyszla ostatnia wartosc 1620
 String lastTx = "-";
 int countTx = 0;
 
@@ -426,7 +428,10 @@ void SaveAndSendData(String key, String value)
 	PublishValue(key, value); // znane rejestry jako encje HA
 
 	if (key == TechTime)
+	{
+		clockRecvTime = time(nullptr);
 		CheckControllerClock(value);
+	}
 	if (key == TechMode)
 		CheckModeVerify(value);
 
@@ -490,11 +495,12 @@ String ValuesHTML()
 		char buf[64];
 		sprintf(buf, "Zegar sterownika: %02ld:%02ld", (v >> 8) & 0xFF, v & 0xFF);
 		s += buf;
-		time_t now = time(nullptr);
-		if (now > 1600000000)
+		if (clockRecvTime > 1600000000)
 		{
-			struct tm* t = localtime(&now);
-			sprintf(buf, " (czas z NTP: %02d:%02d)", t->tm_hour, t->tm_min);
+			// porownujemy z czasem odbioru - sterownik wysyla godzine co jakis czas,
+			// wiec porownanie z "teraz" pokazywaloby sztuczna roznice
+			struct tm* t = localtime(&clockRecvTime);
+			sprintf(buf, " (odebrano o %02d:%02d:%02d wg NTP)", t->tm_hour, t->tm_min, t->tm_sec);
 			s += buf;
 		}
 		s += "<br/>";
@@ -608,6 +614,7 @@ void QueueTx(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 	txCmd.val = val;
 	txCmd.gapMs = gapMs;
 	txCmd.since = millis();
+	txCmd.isClock = false;
 	txCmd.pending = true;
 
 	char buf[48];
@@ -690,9 +697,17 @@ void QueueClockSync()
 		SendLog("TX_brak_czasu_NTP");
 		return;
 	}
-	struct tm* t = localtime(&now);
-	// odczyt 1620 = 5664 -> zapis parametru 664 = 0x0298; format: bajt godzina, bajt minuty
-	QueueTx(0x0000, 0x0298, (uint16_t)((t->tm_hour << 8) | t->tm_min), 0);
+	// odczyt 1620 = 5664 -> zapis parametru 664 = 0x0298; format: bajt godzina, bajt minuty.
+	// Sterownik przyjmuje tylko godzine i minuty (sekundy = 0), wiec wysylamy na poczatku minuty
+	// - inaczej po ustawieniu zegar od razu spozni sie o tyle sekund, ile minelo od pelnej minuty.
+	txCmd.addr = 0x0000;
+	txCmd.reg = 0x0298;
+	txCmd.val = 0;          // wyliczane w TxLoop w chwili wysylki
+	txCmd.gapMs = 0;
+	txCmd.since = millis();
+	txCmd.isClock = true;
+	txCmd.pending = true;
+	SendLog("TX_kolejka_zegar");
 }
 
 void SendFrame(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
@@ -746,6 +761,15 @@ void TxLoop()
 		return; // czekamy na puste zapytanie
 	if (sinceFrame < 50 || sinceFrame > 500)
 		return; // tylko w oknie 50-500 ms po ramce
+
+	if (txCmd.isClock)
+	{
+		time_t now = time(nullptr);
+		struct tm* t = localtime(&now);
+		if (t->tm_sec > 10)
+			return; // czekamy na poczatek nastepnej minuty
+		txCmd.val = (uint16_t)((t->tm_hour << 8) | t->tm_min);
+	}
 
 	txCmd.pending = false;
 	SendFrame(txCmd.addr, txCmd.reg, txCmd.val, txCmd.gapMs);
