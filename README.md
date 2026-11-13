@@ -55,6 +55,7 @@ Ramka: `02 26 | adres | rejestr | wartość | 02 18 | CRC`, wysyłana ok. 50 ms 
 Reguła z forum: rejestr odczytu = 5000 + numer parametru, rejestr zapisu = numer parametru
 (np. odczyt `1620` = 5664 → zapis `0298` = 664).
 
+- **automatycznie**: gdy zegar sterownika (`1620`) różni się od NTP o ≥ 2 min, ESP sam go ustawia (nie częściej niż co 10 min; `CLOCK_MAX_DIFF_MIN` w kodzie)
 - przycisk **Ustaw zegar sterownika** – czas z NTP na `0298` (bajt godzina, bajt minuty); efekt widać w encji **Zegar sterownika** (`1620`)
 - pole **Zapis rejestru (test)** / temat `tech_solar/cmd/raw`: `RRRRVVVV` albo `RRRR VVVV [ADRES] [ODSTĘP_MS]`,
   np. `0298 1118` (17:24), `0298 1118 fff4`, `0298 1118 0000 2` (2 ms między bajtami)
