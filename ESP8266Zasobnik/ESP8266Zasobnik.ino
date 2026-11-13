@@ -2,6 +2,9 @@
 #include <stddef.h>
 #include <HashMap.h>
 #include <time.h>
+#include <ArduinoOTA.h>              // wgrywanie z Arduino IDE przez WiFi
+#include <ESP8266WebServer.h>
+#include <ESP8266HTTPUpdateServer.h> // wgrywanie pliku .bin przez przegladarke
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h> // biblioteka "PubSubClient" (Nick O'Leary)
 
@@ -27,6 +30,9 @@ void DebugLog(String msg);
 #include "secrets.h" // hasla - plik poza repo, wzor w secrets.h.example
 const char* ssid = SECRET_WIFI_SSID;
 const char* password = SECRET_WIFI_PASSWORD;
+#ifndef SECRET_OTA_PASSWORD
+#define SECRET_OTA_PASSWORD "zmien_mnie" // dopisz wlasne haslo w secrets.h
+#endif
 
 // definicje TECH
 #define TechTempSolar "1701"
@@ -69,6 +75,8 @@ volatile int countErrorMqtt = 0;
 String lastLog = "";
 
 WiFiServer server(80);
+ESP8266WebServer updateServer(81);   // http://IP:81/update
+ESP8266HTTPUpdateServer httpUpdater;
 WiFiClient client;
 
 // MQTT do Home Assistant
@@ -141,6 +149,16 @@ void setup(void)
 	server.begin();
 	contentHTML += "HTTP server started<br/>";
 
+	// aktualizacja przez WiFi: Arduino IDE (port sieciowy) albo przegladarka http://IP:81/update
+	ArduinoOTA.setHostname("ESP8266Zasobnik");
+	ArduinoOTA.setPassword(SECRET_OTA_PASSWORD);
+	ArduinoOTA.onStart([]() { SendLog("OTA_start"); LEDOn(ledRed); LEDOn(ledBlue); });
+	ArduinoOTA.onError([](ota_error_t e) { SendLog("OTA_blad_" + String(e)); LEDOff(ledBlue); });
+	ArduinoOTA.begin();
+	httpUpdater.setup(&updateServer, "/update", "admin", SECRET_OTA_PASSWORD);
+	updateServer.begin();
+	contentHTML += "OTA: Arduino IDE lub http://" + WiFi.localIP().toString() + ":81/update<br/>";
+
 	deviceId = "tech_solar_" + String(ESP.getChipId(), HEX);
 	mqtt.setServer(SECRET_MQTT_HOST, SECRET_MQTT_PORT);
 	mqtt.setBufferSize(1024); // konfiguracja autowykrywania HA nie miesci sie w domyslnych 256 B
@@ -163,6 +181,9 @@ void setup(void)
 
 void loop(void)
 {
+	ArduinoOTA.handle();
+	updateServer.handleClient();
+
 	HandleWWWClient();
 
 	MqttLoop();

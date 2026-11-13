@@ -59,3 +59,14 @@ Reguła z forum: rejestr odczytu = 5000 + numer parametru, rejestr zapisu = nume
 - pole **Zapis rejestru (test)** / temat `tech_solar/cmd/raw`: `RRRRVVVV` albo `RRRR VVVV [ADRES] [ODSTĘP_MS]`,
   np. `0298 1118` (17:24), `0298 1118 fff4`, `0298 1118 0000 2` (2 ms między bajtami)
 - wysłana ramka: `tech_solar/tx`, logi `TX_...` na `tech_solar/log`
+
+## Aktualizacja przez WiFi (OTA)
+
+Pierwszy raz trzeba wgrać kablem. Potem:
+
+- **Arduino IDE**: *Narzędzia → Port* → port sieciowy **ESP8266Zasobnik at 192.168.x.x**, *Wgraj*,
+  hasło = `SECRET_OTA_PASSWORD`. (Windows może zapytać o zgodę w zaporze – zezwól.)
+- **Przeglądarka**: w IDE *Szkic → Eksportuj skompilowany plik binarny*, potem `http://IP_ESP:81/update`,
+  login `admin`, hasło `SECRET_OTA_PASSWORD`, wybierz plik `.bin`.
+
+W *Narzędzia → Flash Size* musi być opcja z OTA (domyślne dla NodeMCU 1.0: *4MB (FS:2MB OTA:~1019KB)*).
