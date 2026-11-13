@@ -37,6 +37,10 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechTime "1620" // czas na sterowniku
 #define TechPower "1b98" // uzysk chwilowy
 #define TechPowerDaily "1b99" // uzysk dzienny
+#define TechEnergyWeek "1b9a" // uzysk tygodniowy, kWh bez dzielnika
+#define TechEnergyMonth "1b9b" // uzysk miesieczny, kWh bez dzielnika
+#define TechEnergy1B9C "1b9c" // prawdopodobnie uzysk roczny/calkowity - niepotwierdzone
+#define TechState "157c" // stan sterownika: 0x1E reczna, 0x62 normalna (?), 0x68 przegrzanie kolektora
 
 //#1B98 -> Uzysk chwilowy [0051=>8.1kWh]
 //#1B99 -> Uzysk dzienny [0051=>8.1kWh]
@@ -205,34 +209,16 @@ void ProcessByte(int przeslanyBajt)
 			if (testCRC == calculatedCRC)
 		//	if (crc16_mcrf4xx(0xFFFF, (uint8_t*)readLine.c_str(), readLine.length()))
 			{
-        for (int i = 0; i < readLine.length() - 8; i = i + 8)
+				// i = 8: pomijamy naglowek 0226 + adres
+				for (int i = 8; i < readLine.length() - 8; i = i + 8)
 				{
 					key = readLine.substring(i, i + 4);
 					value = readLine.substring(i + 4, i + 8);
 
-					if (mypin.indexOf(key) == -1) // nie ma takiego
+					// zapisujemy wszystkie rejestry; wysylamy tylko nowe lub zmienione
+					if (mypin.indexOf(key) == -1 || mypin[key] != value)
 					{
-						if ((key == TechTempSolar) ||
-							(key == TechTempTank) ||
-							(key == TechPumpPower) ||
-							(key == TechPumpOnOff) ||
-							(key == TechMode) ||
-              (key == TechPower) ||
-              (key == TechPowerDaily))
-						{ // na start zapisujemy tylko te ktore uzywamy
-              LEDOff(ledBlue);
-
-							SaveAndSendData(key, value);
-						}
-						else
-						{
-						//	mypin[key] = value; nie logujmy innych na razie
-						}
-					}
-					else if (mypin[key] != value) // juz taki jest i sie zmienil
-					{
-            LEDOff(ledBlue);
-            
+						LEDOff(ledBlue);
 						SaveAndSendData(key, value);
 					}
 				}
@@ -443,24 +429,9 @@ String SystemUptime()
 
 void SaveAndSendData(String key, String value)
 {
-	if ((key != TechTempSolar) && (key != TechTempTank) && (key != TechMode)
-		&& (key != TechPumpOnOff) && (key != TechPumpPower)
-		&& (key != TechPower) && (key != TechPowerDaily)
-		&& (key != TechTime)  // pomijamy zmiane godziny
-		&& (key != "1742")  // to samo co 1701 (moe jakis offset mozna ustawic na regulatorze)
-		&& (key != "1743")) // to samo co 1702 (moe jakis offset mozna ustawic na regulatorze)
-	{
-		String log = "";
-		log += key;
-		log += "_";
-		log += mypin[key];
-		log += "_";
-		log += value;
-
-		SendLog(log);
-	}
 	mypin[key] = value;
-	PublishValue(key, value);
+	PublishRaw(key, value);   // kazdy rejestr na tech_solar/raw/<rejestr>
+	PublishValue(key, value); // znane rejestry jako encje HA
 
 	DBG("Zmiana " + key + " " + value);
 }
@@ -490,6 +461,19 @@ String ModeName(long mode)
 	return String(mode);
 }
 
+String StateName(long state)
+{
+	switch (state & 0xFF)
+	{
+		case 0x1E: return "praca ręczna";
+		case 0x62: return "praca normalna";
+		case 0x68: return "przegrzanie kolektora";
+	}
+	char buf[12];
+	sprintf(buf, "kod 0x%02lX", state & 0xFF);
+	return String(buf);
+}
+
 String ValuesHTML()
 {
 	String s;
@@ -500,6 +484,10 @@ String ValuesHTML()
 	if (mypin.indexOf(TechPumpPower) != -1) s += "Moc pompy: " + String(HexToLong(mypin[TechPumpPower])) + " %<br/>";
 	if (mypin.indexOf(TechPower) != -1) s += "Uzysk chwilowy: " + String(HexToLong(mypin[TechPower]) / 10.0, 1) + " kW<br/>";
 	if (mypin.indexOf(TechPowerDaily) != -1) s += "Uzysk dzienny: " + String(HexToLong(mypin[TechPowerDaily]) / 10.0, 1) + " kWh<br/>";
+	if (mypin.indexOf(TechEnergyWeek) != -1) s += "Uzysk tygodniowy: " + String(HexToLong(mypin[TechEnergyWeek])) + " kWh<br/>";
+	if (mypin.indexOf(TechEnergyMonth) != -1) s += "Uzysk miesieczny: " + String(HexToLong(mypin[TechEnergyMonth])) + " kWh<br/>";
+	if (mypin.indexOf(TechEnergy1B9C) != -1) s += "1B9C (?): " + String(HexToLong(mypin[TechEnergy1B9C])) + "<br/>";
+	if (mypin.indexOf(TechState) != -1) s += "Stan: " + StateName(HexToLong(mypin[TechState])) + " (" + mypin[TechState] + ")<br/>";
 	return s;
 }
 
@@ -546,6 +534,11 @@ void SimulateTECH()
 		{ 0x1757, pumpPower },
 		{ 0x1b98, power },
 		{ 0x1b99, daily },
+		{ 0x1b9a, (uint16_t)(20 + daily / 10) },     // tygodniowy kWh
+		{ 0x1b9b, (uint16_t)(150 + daily / 10) },    // miesieczny kWh
+		{ 0x1b9c, (uint16_t)(58164 + daily / 10) },  // 1B9C jak u sikor16
+		{ 0x157c, (uint16_t)(tempSolar > 800 ? 0x68 : 0x62) }, // >80 C = przegrzanie
+		{ 0x1ba1, (uint16_t)(t % 10) },              // nieznany - test raw
 	};
 	const int n = sizeof(regs) / sizeof(regs[0]);
 
@@ -616,7 +609,8 @@ void MqttConnect()
 	PublishDiscovery();
 
 	// po (ponownym) polaczeniu wyslij wszystkie znane wartosci
-	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily };
+	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily,
+		TechEnergyWeek, TechEnergyMonth, TechEnergy1B9C, TechState };
 	for (const char* k : keys)
 	{
 		if (mypin.indexOf(k) != -1)
@@ -664,6 +658,26 @@ void PublishValue(String key, String value)
 		obj = "energy_daily";
 		payload = String(HexToLong(value) / 10.0, 1);
 	}
+	else if (key == TechEnergyWeek)
+	{
+		obj = "energy_week";
+		payload = String(HexToLong(value));
+	}
+	else if (key == TechEnergyMonth)
+	{
+		obj = "energy_month";
+		payload = String(HexToLong(value));
+	}
+	else if (key == TechEnergy1B9C)
+	{
+		obj = "reg_1b9c";
+		payload = String(HexToLong(value));
+	}
+	else if (key == TechState)
+	{
+		obj = "state";
+		payload = StateName(HexToLong(value));
+	}
 	else
 	{
 		return;
@@ -674,6 +688,17 @@ void PublishValue(String key, String value)
 	mqtt.publish(topic.c_str(), payload.c_str(), true);
 	LEDOff(ledGreen);
 	countPublish++;
+}
+
+void PublishRaw(String key, String value)
+{
+	if (!mqtt.connected())
+		return;
+
+	// surowy podglad do rozpracowywania rejestrow (bez encji w HA)
+	String topic = String(MQTT_BASE "/raw/") + key;
+	String payload = value + " = " + String(HexToLong(value)) + " / " + String((int16_t)HexToLong(value));
+	mqtt.publish(topic.c_str(), payload.c_str(), true);
 }
 
 void PublishDiag()
@@ -721,8 +746,16 @@ void PublishDiscovery()
 		",\"dev_cla\":\"power\",\"unit_of_meas\":\"kW\",\"stat_cla\":\"measurement\"");
 	PublishDiscoveryEntity("sensor", "energy_daily", "Uzysk dzienny", "energy_daily",
 		",\"dev_cla\":\"energy\",\"unit_of_meas\":\"kWh\",\"stat_cla\":\"total_increasing\"");
+	PublishDiscoveryEntity("sensor", "energy_week", "Uzysk tygodniowy", "energy_week",
+		",\"dev_cla\":\"energy\",\"unit_of_meas\":\"kWh\",\"stat_cla\":\"total_increasing\"");
+	PublishDiscoveryEntity("sensor", "energy_month", "Uzysk miesięczny", "energy_month",
+		",\"dev_cla\":\"energy\",\"unit_of_meas\":\"kWh\",\"stat_cla\":\"total_increasing\"");
+	PublishDiscoveryEntity("sensor", "state", "Stan sterownika", "state",
+		",\"ic\":\"mdi:solar-panel\"");
 
 	// diagnostyka
+	PublishDiscoveryEntity("sensor", "reg_1b9c", "Rejestr 1B9C (uzysk roczny?)", "reg_1b9c",
+		",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\"");
 	PublishDiscoveryEntity("sensor", "rssi", "WiFi RSSI", "diag",
 		",\"dev_cla\":\"signal_strength\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.rssi }}\"");
 	PublishDiscoveryEntity("sensor", "uptime", "Czas pracy", "diag",
