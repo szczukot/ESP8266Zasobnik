@@ -3,6 +3,7 @@
 #include <HashMap.h>
 #include <SoftwareSerial.h>
 #include <ESP8266WiFi.h>
+#include <PubSubClient.h> // biblioteka "PubSubClient" (Nick O'Leary)
 
 //#define DEBUG
 
@@ -44,10 +45,20 @@ volatile int countErrorCRC = 0;
 volatile int countErrorStart = 0;
 volatile int countErrorClientTimeout = 0;
 volatile int countReceivedFrame = 0;
+volatile int countPublish = 0;
+volatile int countErrorMqtt = 0;
 String lastLog = "";
 
 WiFiServer server(80);
 WiFiClient client;
+
+// MQTT do Home Assistant
+#define MQTT_BASE "tech_solar"
+WiFiClient mqttNet;
+PubSubClient mqtt(mqttNet);
+String deviceId;
+unsigned long lastMqttTry = 0;
+unsigned long lastDiag = 0;
 
 CreateHashMap(mypin, String, String, 255);
 
@@ -108,6 +119,10 @@ void setup(void)
 	server.begin();
 	contentHTML += "HTTP server started<br/>";
 
+	deviceId = "tech_solar_" + String(ESP.getChipId(), HEX);
+	mqtt.setServer(SECRET_MQTT_HOST, SECRET_MQTT_PORT);
+	mqtt.setBufferSize(1024); // konfiguracja autowykrywania HA nie miesci sie w domyslnych 256 B
+
 	Serial.setRxBufferSize(1024); // HTTP blokuje petle - wiekszy bufor, zeby nie gubic bajtow
 	Serial.begin(9600);
 //	txSerial.begin(9600);
@@ -126,6 +141,8 @@ void setup(void)
 void loop(void)
 {
 	HandleWWWClient();
+
+	MqttLoop();
 
 	ReadDataFromTECH();
 }
@@ -343,6 +360,13 @@ void HandleWWWClient()
 			s += "Received frames: " + String(countReceivedFrame);
 			s += "<br/>";
 			s += "Last log: " + lastLog;
+			s += "<br/>";
+			if (mqtt.connected())
+				s += "MQTT: polaczony";
+			else
+				s += "MQTT: brak polaczenia (stan " + String(mqtt.state()) + ")";
+			s += "<br/>";
+			s += "MQTT wyslane: " + String(countPublish) + "   bledy polaczenia: " + String(countErrorMqtt);
 			s += "<br/><br/>";
 			s += ValuesHTML();
 		}
@@ -443,6 +467,7 @@ void SaveAndSendData(String key, String value)
 		SendLog(log);
 	}
 	mypin[key] = value;
+	PublishValue(key, value);
 
   #ifdef DEBUG
     Serial.println(key + " " + value);
@@ -491,6 +516,168 @@ void SendLog(String msg)
 {
 	msg += "_free_" + String(ESP.getFreeHeap());
 	lastLog = msg;
+	if (mqtt.connected())
+		mqtt.publish(MQTT_BASE "/log", msg.c_str());
+}
+
+// --- MQTT / Home Assistant ---
+
+void MqttLoop()
+{
+	if (!mqtt.connected())
+	{
+		LEDOn(ledRed); // czerwona = brak polaczenia z MQTT
+		if (millis() - lastMqttTry > 5000)
+		{
+			lastMqttTry = millis();
+			MqttConnect();
+		}
+	}
+	else
+	{
+		mqtt.loop();
+		if (millis() - lastDiag > 60000)
+		{
+			lastDiag = millis();
+			PublishDiag();
+		}
+	}
+}
+
+void MqttConnect()
+{
+	if (WiFi.status() != WL_CONNECTED)
+		return;
+
+	if (!mqtt.connect(deviceId.c_str(), SECRET_MQTT_USER, SECRET_MQTT_PASSWORD,
+		MQTT_BASE "/status", 0, true, "offline"))
+	{
+		countErrorMqtt++;
+		return;
+	}
+
+	LEDOff(ledRed);
+	mqtt.publish(MQTT_BASE "/status", "online", true);
+	PublishDiscovery();
+
+	// po (ponownym) polaczeniu wyslij wszystkie znane wartosci
+	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily };
+	for (const char* k : keys)
+	{
+		if (mypin.indexOf(k) != -1)
+			PublishValue(k, mypin[k]);
+	}
+	PublishDiag();
+}
+
+void PublishValue(String key, String value)
+{
+	if (!mqtt.connected())
+		return;
+
+	String obj;
+	String payload;
+	if (key == TechTempSolar || key == TechTempTank)
+	{
+		if (IsNoSensor(value))
+			return;
+		obj = (key == TechTempSolar) ? "temp_solar" : "temp_tank";
+		payload = String(HexToTemp(value), 1);
+	}
+	else if (key == TechMode)
+	{
+		obj = "mode";
+		payload = ModeName(HexToLong(value));
+	}
+	else if (key == TechPumpOnOff)
+	{
+		obj = "pump";
+		payload = HexToLong(value) ? "ON" : "OFF";
+	}
+	else if (key == TechPumpPower)
+	{
+		obj = "pump_power";
+		payload = String(HexToLong(value));
+	}
+	else if (key == TechPower)
+	{
+		obj = "power";
+		payload = String(HexToLong(value) / 10.0, 1);
+	}
+	else if (key == TechPowerDaily)
+	{
+		obj = "energy_daily";
+		payload = String(HexToLong(value) / 10.0, 1);
+	}
+	else
+	{
+		return;
+	}
+
+	LEDOn(ledGreen);
+	String topic = String(MQTT_BASE "/") + obj;
+	mqtt.publish(topic.c_str(), payload.c_str(), true);
+	LEDOff(ledGreen);
+	countPublish++;
+}
+
+void PublishDiag()
+{
+	if (!mqtt.connected())
+		return;
+
+	String j = "{\"rssi\":" + String(WiFi.RSSI()) +
+		",\"uptime\":" + String(millis() / 1000) +
+		",\"heap\":" + String(ESP.getFreeHeap()) +
+		",\"frames\":" + String(countReceivedFrame) +
+		",\"crc_errors\":" + String(countErrorCRC) +
+		",\"start_errors\":" + String(countErrorStart) + "}";
+	mqtt.publish(MQTT_BASE "/diag", j.c_str(), true);
+}
+
+void PublishDiscoveryEntity(const char* component, const char* obj, const char* name, const char* stateTopic, const char* extra)
+{
+	String topic = String("homeassistant/") + component + "/" + deviceId + "/" + obj + "/config";
+
+	String p = String("{\"name\":\"") + name + "\"";
+	p += ",\"uniq_id\":\"" + deviceId + "_" + obj + "\"";
+	p += String(",\"stat_t\":\"" MQTT_BASE "/") + stateTopic + "\"";
+	p += ",\"avty_t\":\"" MQTT_BASE "/status\"";
+	p += extra;
+	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-401n\",\"sw\":\"ESP8266Zasobnik\"}";
+	p += "}";
+
+	mqtt.publish(topic.c_str(), p.c_str(), true);
+}
+
+void PublishDiscovery()
+{
+	PublishDiscoveryEntity("sensor", "temp_solar", "Temperatura panelu", "temp_solar",
+		",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":\"measurement\"");
+	PublishDiscoveryEntity("sensor", "temp_tank", "Temperatura zasobnika", "temp_tank",
+		",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":\"measurement\"");
+	PublishDiscoveryEntity("sensor", "mode", "Tryb pracy", "mode",
+		",\"ic\":\"mdi:cog\"");
+	PublishDiscoveryEntity("binary_sensor", "pump", "Pompa", "pump",
+		",\"dev_cla\":\"running\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\"");
+	PublishDiscoveryEntity("sensor", "pump_power", "Moc pompy", "pump_power",
+		",\"unit_of_meas\":\"%\",\"stat_cla\":\"measurement\",\"ic\":\"mdi:pump\"");
+	PublishDiscoveryEntity("sensor", "power", "Uzysk chwilowy", "power",
+		",\"dev_cla\":\"power\",\"unit_of_meas\":\"kW\",\"stat_cla\":\"measurement\"");
+	PublishDiscoveryEntity("sensor", "energy_daily", "Uzysk dzienny", "energy_daily",
+		",\"dev_cla\":\"energy\",\"unit_of_meas\":\"kWh\",\"stat_cla\":\"total_increasing\"");
+
+	// diagnostyka
+	PublishDiscoveryEntity("sensor", "rssi", "WiFi RSSI", "diag",
+		",\"dev_cla\":\"signal_strength\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.rssi }}\"");
+	PublishDiscoveryEntity("sensor", "uptime", "Czas pracy", "diag",
+		",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.uptime }}\"");
+	PublishDiscoveryEntity("sensor", "frames", "Odebrane ramki", "diag",
+		",\"stat_cla\":\"total_increasing\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.frames }}\"");
+	PublishDiscoveryEntity("sensor", "crc_errors", "Bledy CRC", "diag",
+		",\"stat_cla\":\"total_increasing\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.crc_errors }}\"");
+	PublishDiscoveryEntity("sensor", "start_errors", "Bledy poczatku ramki", "diag",
+		",\"stat_cla\":\"total_increasing\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.start_errors }}\"");
 }
 
 
