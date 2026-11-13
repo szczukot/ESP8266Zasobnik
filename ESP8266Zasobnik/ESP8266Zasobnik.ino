@@ -887,7 +887,7 @@ void MqttConnect()
 
 	// po (ponownym) polaczeniu wyslij wszystkie znane wartosci
 	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily,
-		TechEnergyWeek, TechEnergyMonth, TechEnergy1B9C, TechState, TechTime };
+		TechEnergyWeek, TechEnergyMonth, TechEnergy1B9C, TechState };
 	for (const char* k : keys)
 	{
 		if (mypin.indexOf(k) != -1)
@@ -949,14 +949,6 @@ void PublishValue(String key, String value)
 	{
 		obj = "reg_1b9c";
 		payload = String(HexToLong(value));
-	}
-	else if (key == TechTime)
-	{
-		long v = HexToLong(value);
-		char buf[8];
-		sprintf(buf, "%02ld:%02ld", (v >> 8) & 0xFF, v & 0xFF);
-		obj = "clock";
-		payload = buf;
 	}
 	else if (key == TechState)
 	{
@@ -1048,8 +1040,8 @@ void PublishDiscovery()
 	mqtt.publish(String("homeassistant/text/" + deviceId + "/raw_write/config").c_str(), "", true);
 
 	// diagnostyka
-	PublishDiscoveryEntity("sensor", "clock", "Zegar sterownika", "clock",
-		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:clock-outline\"");
+	// zegar sterownika tylko na stronie WWW (zmienia sie co minute - zasmiecal historie HA)
+	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/clock/config").c_str(), "", true);
 	PublishDiscoveryEntity("sensor", "reg_1b9c", "Rejestr 1B9C (uzysk roczny?)", "reg_1b9c",
 		",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\"");
 	PublishDiscoveryEntity("sensor", "rssi", "WiFi RSSI", "diag",
