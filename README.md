@@ -57,6 +57,9 @@ Reguła z forum: rejestr odczytu = 5000 + numer parametru, rejestr zapisu = nume
 
 - **automatycznie**: gdy zegar sterownika (`1620`) różni się od NTP o ≥ 2 min, ESP sam go ustawia (nie częściej niż co 10 min; `CLOCK_MAX_DIFF_MIN` w kodzie)
 - przycisk **Ustaw zegar sterownika** – czas z NTP na `0298` (bajt godzina, bajt minuty); efekt widać w encji **Zegar sterownika** (`1620`)
+- lista **Tryb pracy** (auto / odmrażanie / urlopowy) – zapis na `037D` (parametr 893, odczyt `1705`);
+  jeśli w ciągu 60 s `1705` nie pokaże nowego trybu, druga próba wprost na `1705`;
+  wynik w logu: `Tryb_ok_<tryb>_rej_<rejestr>`, `Tryb_brak_potwierdzenia_proba_1705` albo `Tryb_zapis_nie_zadzialal`
 - pole **Zapis rejestru (test)** / temat `tech_solar/cmd/raw`: `RRRRVVVV` albo `RRRR VVVV [ADRES] [ODSTĘP_MS]`,
   np. `0298 1118` (17:24), `0298 1118 fff4`, `0298 1118 0000 2` (2 ms między bajtami)
 - wysłana ramka: `tech_solar/tx`, logi `TX_...` na `tech_solar/log`

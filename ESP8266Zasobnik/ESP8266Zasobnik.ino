@@ -105,6 +105,17 @@ int countTx = 0;
 #define CLOCK_MAX_DIFF_MIN 2              // od jakiej roznicy (minuty) poprawiac zegar
 #define CLOCK_SYNC_MIN_INTERVAL 600000UL  // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
 unsigned long lastAutoClockSync = 0;
+
+// zapis trybu pracy: odczyt 1705 = 5893 -> zapis parametru 893 = 0x037D (wg reguly, do potwierdzenia)
+#define MODE_WRITE_REG 0x037D
+#define MODE_VERIFY_MS 60000UL // ile czekac na potwierdzenie zmiany w 1705
+struct ModeVerify
+{
+	int want;          // -1 = nic nie sprawdzamy
+	uint16_t reg;      // rejestr, ktorym probowalismy
+	unsigned long since;
+};
+ModeVerify modeVerify = { -1, 0, 0 };
 int countAutoClockSync = 0;
 
 CreateHashMap(mypin, String, String, 255);
@@ -416,6 +427,8 @@ void SaveAndSendData(String key, String value)
 
 	if (key == TechTime)
 		CheckControllerClock(value);
+	if (key == TechMode)
+		CheckModeVerify(value);
 
 	DBG("Zmiana " + key + " " + value);
 }
@@ -718,6 +731,8 @@ void SendFrame(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 
 void TxLoop()
 {
+	ModeVerifyLoop();
+
 	if (!txCmd.pending)
 		return;
 	if (readLine.length() != 0 || Serial.available() > 0)
@@ -736,6 +751,60 @@ void TxLoop()
 	SendFrame(txCmd.addr, txCmd.reg, txCmd.val, txCmd.gapMs);
 }
 
+int ModeFromName(const String& name)
+{
+	if (name == "auto") return 0;
+	if (name == "odmrażanie") return 1;
+	if (name == "urlopowy") return 2;
+	return -1;
+}
+
+void SetMode(int mode)
+{
+	if (mode < 0)
+		return;
+	modeVerify.want = mode;
+	modeVerify.reg = MODE_WRITE_REG;
+	modeVerify.since = millis();
+	QueueTx(0x0000, MODE_WRITE_REG, mode, 0);
+}
+
+// Wywolywane gdy przyjdzie nowa wartosc 1705
+void CheckModeVerify(const String& value)
+{
+	if (modeVerify.want < 0)
+		return;
+	if (HexToLong(value) == modeVerify.want)
+	{
+		char buf[40];
+		sprintf(buf, "Tryb_ok_%d_rej_%04x", modeVerify.want, modeVerify.reg);
+		SendLog(buf);
+		modeVerify.want = -1;
+	}
+}
+
+// Brak potwierdzenia -> druga proba zapisem wprost na 1705, potem rezygnacja
+void ModeVerifyLoop()
+{
+	if (modeVerify.want < 0 || txCmd.pending)
+		return;
+	if (millis() - modeVerify.since < MODE_VERIFY_MS)
+		return;
+
+	if (modeVerify.reg == MODE_WRITE_REG)
+	{
+		SendLog("Tryb_brak_potwierdzenia_proba_1705");
+		modeVerify.reg = 0x1705;
+		modeVerify.since = millis();
+		QueueTx(0x0000, 0x1705, modeVerify.want, 0);
+	}
+	else
+	{
+		SendLog("Tryb_zapis_nie_zadzialal");
+		modeVerify.want = -1;
+	}
+}
+
 void MqttCallback(char* topic, byte* payload, unsigned int length)
 {
 	String t(topic);
@@ -747,6 +816,8 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
 		QueueClockSync();
 	else if (t == MQTT_BASE "/cmd/raw")
 		QueueRaw(p);
+	else if (t == MQTT_BASE "/cmd/mode")
+		SetMode(ModeFromName(p));
 }
 
 // --- MQTT / Home Assistant ---
@@ -927,8 +998,10 @@ void PublishDiscovery()
 		",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":\"measurement\"");
 	PublishDiscoveryEntity("sensor", "temp_tank", "Temperatura zasobnika", "temp_tank",
 		",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":\"measurement\"");
-	PublishDiscoveryEntity("sensor", "mode", "Tryb pracy", "mode",
-		",\"ic\":\"mdi:cog\"");
+	// tryb pracy jako wybor (zamiast dawnego czujnika - usuwamy jego konfiguracje)
+	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/mode/config").c_str(), "", true);
+	PublishDiscoveryEntity("select", "mode", "Tryb pracy", "mode",
+		",\"cmd_t\":\"" MQTT_BASE "/cmd/mode\",\"ops\":[\"auto\",\"odmrażanie\",\"urlopowy\"],\"ic\":\"mdi:cog\"");
 	PublishDiscoveryEntity("binary_sensor", "pump", "Pompa", "pump",
 		",\"dev_cla\":\"running\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\"");
 	PublishDiscoveryEntity("sensor", "pump_power", "Moc pompy", "pump_power",
