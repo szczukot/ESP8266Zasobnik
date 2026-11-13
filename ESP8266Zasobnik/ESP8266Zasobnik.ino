@@ -1,7 +1,7 @@
 #include <WiFiClient.h>
 #include <stddef.h>
 #include <HashMap.h>
-#include <SoftwareSerial.h>
+#include <time.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h> // biblioteka "PubSubClient" (Nick O'Leary)
 
@@ -53,7 +53,6 @@ const char* password = SECRET_WIFI_PASSWORD;
 
 // definicje ESP8266
 #define rx_pin 3
-#define tx_pin 14
 const int ledIn = 2;
 const int ledGreen = 12;
 const int ledBlue = 13;
@@ -80,10 +79,22 @@ String deviceId;
 unsigned long lastMqttTry = 0;
 unsigned long lastDiag = 0;
 
+// kolejka zapisu do sterownika
+struct TxCommand
+{
+	bool pending;
+	uint16_t addr;
+	uint16_t reg;
+	uint16_t val;
+	uint8_t gapMs;
+	unsigned long since;
+};
+TxCommand txCmd = { false, 0, 0, 0, 0, 0 };
+String lastTx = "-";
+int countTx = 0;
+
 CreateHashMap(mypin, String, String, 255);
 
-//SoftwareSerial txSerial(SW_SERIAL_UNUSED_PIN, tx_pin); // RX, TX
-unsigned long bitTime;
 
 void setup(void)
 {
@@ -94,7 +105,6 @@ void setup(void)
 	LEDOff(ledIn); // zgas led wbudowany
 
 	pinMode(rx_pin, INPUT_PULLUP); // podcignij do VCC
-//	pinMode(tx_pin, OUTPUT);
 
 	// wlacz czerwona diode - serwer startuje
 	LEDOn(ledRed);
@@ -134,14 +144,15 @@ void setup(void)
 	deviceId = "tech_solar_" + String(ESP.getChipId(), HEX);
 	mqtt.setServer(SECRET_MQTT_HOST, SECRET_MQTT_PORT);
 	mqtt.setBufferSize(1024); // konfiguracja autowykrywania HA nie miesci sie w domyslnych 256 B
+	mqtt.setCallback(MqttCallback);
+
+	// czas z NTP (do ustawiania zegara sterownika), strefa Polska z czasem letnim
+	configTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
 
 	Serial.setRxBufferSize(1024); // HTTP blokuje petle - wiekszy bufor, zeby nie gubic bajtow
 	Serial.begin(9600);
 //	txSerial.begin(9600);
 
-	pinMode(tx_pin, OUTPUT);
-	digitalWrite(tx_pin, HIGH);
-	bitTime = ESP.getCpuFreqMHz() * 1000000 / 9600; //80 * 1 000 000 / 9600 = 8333;
 
 	// wszystko wystartowalo - wylacz czerwona diode
 	LEDOff(ledRed);
@@ -156,11 +167,15 @@ void loop(void)
 
 	MqttLoop();
 
+	TxLoop();
+
 	ReadDataFromTECH();
 }
 
 
 String readLine = "";
+unsigned long lastFrameEnd = 0; // koniec ostatniej ramki - do wyboru momentu nadawania
+bool lastWasPoll = false;       // czy byla to pusta ramka zapytania 0226fff40218
 String bajt2;
 String key;
 String value;
@@ -232,6 +247,8 @@ void ProcessByte(int przeslanyBajt)
 
 				countErrorCRC++;
 			}
+			lastFrameEnd = millis();
+			lastWasPoll = (readLine.length() == 16 && readLine.startsWith("0226fff4"));
 			readLine = "";
 		}
 
@@ -246,8 +263,6 @@ void ProcessByte(int przeslanyBajt)
 		LEDOff(ledBlue);
 	}
 }
-
-#define WAIT { while (ESP.getCycleCount()-start < wait); wait += bitTime; }
 
 void HandleWWWClient()
 {
@@ -278,45 +293,6 @@ void HandleWWWClient()
 		String s = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>";
 		s += contentHTML;
 
-		// Match the request
-		//if (req.indexOf("/set") != -1)
-		//{
-
-		//	char* ass = "0226FFF4170500010218BF85";
-		//	//char* ass = "022600001B66008002181885";
-		//	//char* ass = "0226FFF41B66008002185719";
-		//	uint8_t aa[12];
-		//	aa[0] = 2;
-		//	aa[1] = 38;
-		//	aa[2] = 255;
-		//	aa[3] = 244;
-		//	aa[4] = 23;
-		//	aa[5] = 05;
-		//	aa[6] = 0;
-		//	aa[7] = 1;
-		//	aa[8] = 2;
-		//	aa[9] = 24;
-		//	aa[10] = 191;
-		//	aa[11] = 133;
-
-		//	unsigned long wait = bitTime;
-		//	unsigned long start = ESP.getCycleCount();
-		//	digitalWrite(tx_pin, LOW);
-		//	WAIT;
-
-		//	for (int i = 0; i < 12; i++)
-		//	{
-		//		size_t ret = writeByte(aa[i]);
-		//	}
-
-		//	digitalWrite(tx_pin, HIGH);
-
-
-		//	s += "<br/>";
-		//	s += "SET !!! ";
-
-		//}
-		//else
 		{
       int rssi = WiFi.RSSI();
 
@@ -346,6 +322,8 @@ void HandleWWWClient()
 				s += "MQTT: brak polaczenia (stan " + String(mqtt.state()) + ")";
 			s += "<br/>";
 			s += "MQTT wyslane: " + String(countPublish) + "   bledy polaczenia: " + String(countErrorMqtt);
+			s += "<br/>";
+			s += "TX: " + String(countTx) + "   ostatnia ramka: " + lastTx + (txCmd.pending ? "   (czeka w kolejce)" : "");
 			s += "<br/><br/>";
 			s += ValuesHTML();
 		}
@@ -382,32 +360,6 @@ int dBmtoPercentage(int dBm)
 
      return quality;
 }//dBmtoPercentage 
-
-size_t writeByte(uint8_t b) 
-{
-	// Disable interrupts in order to get a clean transmit
-	cli();
-	unsigned long wait = bitTime;
-//	digitalWrite(tx_pin, HIGH);
-	unsigned long start = ESP.getCycleCount();
-	// Start bit;
-	digitalWrite(tx_pin, LOW);
-	WAIT;
-	digitalWrite(tx_pin, HIGH);
-	WAIT;
-//	delay(2);
-	for (int i = 0; i < 8; i++) {
-		digitalWrite(tx_pin, (b & 1) ? LOW : HIGH);
-		WAIT;
-		b >>= 1;
-	}
-	// Stop bit
-	digitalWrite(tx_pin, LOW);
-	WAIT;
-	sei();
-	return 1;
-}
-
 
 String SystemUptime()
 {
@@ -568,6 +520,159 @@ void SimulateTECH()
 }
 #endif
 
+// --- zapis do sterownika (sprzetowy TX = GPIO1 -> T1 -> RX sterownika) ---
+//
+// Ramka zapisu: 02 26 | adres | rejestr | wartosc | 02 18 | CRC
+// Adres 0000 = do wszystkich (wg forum). Rejestr zapisu = numer parametru,
+// a rejestr odczytu = 5000 + numer parametru (np. odczyt 1620 = 5664 -> zapis 664 = 0298).
+// Wysylamy ok. 50 ms po pustym zapytaniu 0226FFF40218 (wtedy magistrala jest wolna).
+// Jesli sterownik nie wysyla pustych zapytan, po 20 s wysylamy 50 ms po dowolnej ramce.
+
+
+uint16_t Crc16Bytes(const uint8_t* data, int len)
+{
+	uint16_t crc = 0xFFFF;
+	for (int i = 0; i < len; i++)
+	{
+		crc ^= data[i];
+		for (int b = 0; b < 8; b++)
+			crc = (crc & 1) ? (crc >> 1) ^ 0x8408 : (crc >> 1);
+	}
+	return crc;
+}
+
+void QueueTx(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
+{
+	txCmd.addr = addr;
+	txCmd.reg = reg;
+	txCmd.val = val;
+	txCmd.gapMs = gapMs;
+	txCmd.since = millis();
+	txCmd.pending = true;
+
+	char buf[48];
+	sprintf(buf, "TX_kolejka_%04x_%04x_%04x_gap%d", addr, reg, val, gapMs);
+	SendLog(buf);
+}
+
+// "RRRRVVVV" albo "RRRR VVVV [ADRES] [ODSTEP_MS]", wszystko hex poza odstepem
+void QueueRaw(String p)
+{
+	p.trim();
+	p.toLowerCase();
+	String tok[4];
+	int n = 0;
+	if (p.length() == 8 && p.indexOf(' ') == -1)
+	{
+		tok[0] = p.substring(0, 4);
+		tok[1] = p.substring(4, 8);
+		n = 2;
+	}
+	else
+	{
+		int start = 0;
+		while (n < 4 && start < (int)p.length())
+		{
+			int sp = p.indexOf(' ', start);
+			if (sp == -1) sp = p.length();
+			if (sp > start) tok[n++] = p.substring(start, sp);
+			start = sp + 1;
+		}
+	}
+
+	if (n < 2 || tok[0].length() != 4 || tok[1].length() != 4)
+	{
+		SendLog("TX_zly_format_" + p);
+		return;
+	}
+
+	uint16_t reg = strtol(tok[0].c_str(), NULL, 16);
+	uint16_t val = strtol(tok[1].c_str(), NULL, 16);
+	uint16_t addr = (n >= 3) ? strtol(tok[2].c_str(), NULL, 16) : 0x0000;
+	uint8_t gap = (n >= 4) ? tok[3].toInt() : 0;
+	QueueTx(addr, reg, val, gap);
+}
+
+void QueueClockSync()
+{
+	time_t now = time(nullptr);
+	if (now < 1600000000) // NTP jeszcze nie ustawil czasu
+	{
+		SendLog("TX_brak_czasu_NTP");
+		return;
+	}
+	struct tm* t = localtime(&now);
+	// odczyt 1620 = 5664 -> zapis parametru 664 = 0x0298; format: bajt godzina, bajt minuty
+	QueueTx(0x0000, 0x0298, (uint16_t)((t->tm_hour << 8) | t->tm_min), 0);
+}
+
+void SendFrame(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
+{
+	uint8_t f[12];
+	f[0] = 0x02; f[1] = 0x26;
+	f[2] = addr >> 8; f[3] = addr & 0xFF;
+	f[4] = reg >> 8;  f[5] = reg & 0xFF;
+	f[6] = val >> 8;  f[7] = val & 0xFF;
+	f[8] = 0x02; f[9] = 0x18;
+	uint16_t crc = Crc16Bytes(f, 8);
+	f[10] = crc >> 8; f[11] = crc & 0xFF;
+
+	LEDOn(ledGreen);
+	for (int i = 0; i < 12; i++)
+	{
+		Serial.write(f[i]);
+		if (gapMs)
+		{
+			Serial.flush();
+			delay(gapMs);
+		}
+	}
+	Serial.flush();
+	LEDOff(ledGreen);
+	countTx++;
+
+	char hex[25];
+	for (int i = 0; i < 12; i++)
+		sprintf(hex + 2 * i, "%02x", f[i]);
+	lastTx = String(hex);
+	SendLog("TX_" + lastTx);
+	if (mqtt.connected())
+		mqtt.publish(MQTT_BASE "/tx", lastTx.c_str(), true);
+}
+
+void TxLoop()
+{
+	if (!txCmd.pending)
+		return;
+	if (readLine.length() != 0 || Serial.available() > 0)
+		return; // trwa odbior ramki
+	if (lastFrameEnd == 0)
+		return; // jeszcze nie bylo zadnej ramki
+
+	unsigned long sinceFrame = millis() - lastFrameEnd;
+	bool waitedLong = millis() - txCmd.since > 20000;
+	if (!lastWasPoll && !waitedLong)
+		return; // czekamy na puste zapytanie
+	if (sinceFrame < 50 || sinceFrame > 500)
+		return; // tylko w oknie 50-500 ms po ramce
+
+	txCmd.pending = false;
+	SendFrame(txCmd.addr, txCmd.reg, txCmd.val, txCmd.gapMs);
+}
+
+void MqttCallback(char* topic, byte* payload, unsigned int length)
+{
+	String t(topic);
+	String p;
+	for (unsigned int i = 0; i < length; i++)
+		p += (char)payload[i];
+
+	if (t == MQTT_BASE "/cmd/sync_clock")
+		QueueClockSync();
+	else if (t == MQTT_BASE "/cmd/raw")
+		QueueRaw(p);
+}
+
 // --- MQTT / Home Assistant ---
 
 void MqttLoop()
@@ -606,11 +711,12 @@ void MqttConnect()
 
 	LEDOff(ledRed);
 	mqtt.publish(MQTT_BASE "/status", "online", true);
+	mqtt.subscribe(MQTT_BASE "/cmd/#");
 	PublishDiscovery();
 
 	// po (ponownym) polaczeniu wyslij wszystkie znane wartosci
 	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily,
-		TechEnergyWeek, TechEnergyMonth, TechEnergy1B9C, TechState };
+		TechEnergyWeek, TechEnergyMonth, TechEnergy1B9C, TechState, TechTime };
 	for (const char* k : keys)
 	{
 		if (mypin.indexOf(k) != -1)
@@ -673,6 +779,14 @@ void PublishValue(String key, String value)
 		obj = "reg_1b9c";
 		payload = String(HexToLong(value));
 	}
+	else if (key == TechTime)
+	{
+		long v = HexToLong(value);
+		char buf[8];
+		sprintf(buf, "%02ld:%02ld", (v >> 8) & 0xFF, v & 0xFF);
+		obj = "clock";
+		payload = buf;
+	}
 	else if (key == TechState)
 	{
 		obj = "state";
@@ -721,7 +835,8 @@ void PublishDiscoveryEntity(const char* component, const char* obj, const char* 
 
 	String p = String("{\"name\":\"") + name + "\"";
 	p += ",\"uniq_id\":\"" + deviceId + "_" + obj + "\"";
-	p += String(",\"stat_t\":\"" MQTT_BASE "/") + stateTopic + "\"";
+	if (stateTopic != nullptr)
+		p += String(",\"stat_t\":\"" MQTT_BASE "/") + stateTopic + "\"";
 	p += ",\"avty_t\":\"" MQTT_BASE "/status\"";
 	p += extra;
 	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-401n\",\"sw\":\"ESP8266Zasobnik\"}";
@@ -753,7 +868,15 @@ void PublishDiscovery()
 	PublishDiscoveryEntity("sensor", "state", "Stan sterownika", "state",
 		",\"ic\":\"mdi:solar-panel\"");
 
+	// zapis do sterownika (testy)
+	PublishDiscoveryEntity("button", "sync_clock", "Ustaw zegar sterownika", nullptr,
+		",\"cmd_t\":\"" MQTT_BASE "/cmd/sync_clock\",\"pl_prs\":\"PRESS\",\"ent_cat\":\"config\",\"ic\":\"mdi:clock-edit-outline\"");
+	PublishDiscoveryEntity("text", "raw_write", "Zapis rejestru (test)", "tx",
+		",\"cmd_t\":\"" MQTT_BASE "/cmd/raw\",\"max\":40,\"ent_cat\":\"config\",\"ic\":\"mdi:send\"");
+
 	// diagnostyka
+	PublishDiscoveryEntity("sensor", "clock", "Zegar sterownika", "clock",
+		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:clock-outline\"");
 	PublishDiscoveryEntity("sensor", "reg_1b9c", "Rejestr 1B9C (uzysk roczny?)", "reg_1b9c",
 		",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\"");
 	PublishDiscoveryEntity("sensor", "rssi", "WiFi RSSI", "diag",
