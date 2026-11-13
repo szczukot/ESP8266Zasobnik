@@ -74,3 +74,22 @@ Pierwszy raz trzeba wgrać kablem. Potem:
   login `admin`, hasło `SECRET_OTA_PASSWORD`, wybierz plik `.bin`.
 
 W *Narzędzia → Flash Size* musi być opcja z OTA (domyślne dla NodeMCU 1.0: *4MB (FS:2MB OTA:~1019KB)*).
+
+## Schemat
+
+![Schemat](docs/schemat.png)
+
+Opis połączeń (stan faktyczny na płytce):
+
+| Element | Połączenie |
+|---|---|
+| RJ12 pin 1 (biały) | RX sterownika ← kolektor T1 (otwarty kolektor, bez pull-upu – pull-up ma sterownik) |
+| RJ12 pin 2 (niebieski), pin 4 | GND |
+| RJ12 pin 3 (zielony) | TX sterownika → R2 4k7 → baza T2 |
+| RJ12 pin 5, 6 (czerwony) | ok. 12 V ze sterownika → VCC Witty (wbudowany AMS1117), tantal 100 µF |
+| TXD (GPIO1) | → R1 4k7 → baza T1; R5 10k do VCC (TX w stanie wysokim przy starcie) |
+| RXD (GPIO3) | ← kolektor T2 (pull-up wewnętrzny ESP) |
+| GPIO12 / 13 / 15 | → zewnętrzne LED G / B / R (anody), wspólne katody → R3 10k → **GND** |
+
+Oba tranzystory odwracają sygnał – linia TECH ma odwróconą logikę (spoczynek ≈ 0 V),
+więc ESP nadaje i odbiera zwykłym, nieodwróconym UART-em 9600 8N1.
