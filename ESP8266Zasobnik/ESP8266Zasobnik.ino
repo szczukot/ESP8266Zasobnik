@@ -5,7 +5,23 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h> // biblioteka "PubSubClient" (Nick O'Leary)
 
+// Tryby testowe (odkomentuj jeden lub oba):
+// DEBUG    - dodatkowe komunikaty w MQTT na temat tech_solar/debug
+//            (NIE na Serial - Serial jest podlaczony do sterownika TECH!)
+// SIMULATE - zamiast czytac sterownik, co 5 s generuje sztuczna ramke z poprawnym CRC.
+//            Mozna sprawdzic MQTT i Home Assistant bez podlaczania do TECH.
 //#define DEBUG
+//#define SIMULATE
+
+void ProcessByte(int przeslanyBajt);
+void SimulateTECH();
+void DebugLog(String msg);
+
+#ifdef DEBUG
+#define DBG(msg) DebugLog(msg)
+#else
+#define DBG(msg)
+#endif
 
 // definicje sieci WiFi
 #include "secrets.h" // hasla - plik poza repo, wzor w secrets.h.example
@@ -67,11 +83,6 @@ unsigned long bitTime;
 
 void setup(void)
 {
-#ifdef DEBUG
-	Serial.begin(9600);
-	Serial.println("start");
-#endif
-
 	pinMode(ledGreen, OUTPUT);
 	pinMode(ledRed, OUTPUT);
 	pinMode(ledBlue, OUTPUT);
@@ -94,9 +105,6 @@ void setup(void)
 	// Wait for connection
 	while (WiFi.status() != WL_CONNECTED)
 	{
-#ifdef DEBUG
-		Serial.println(WiFi.status());
-#endif
 		delay(500);
 		contentHTML += ".";
 
@@ -149,37 +157,28 @@ void loop(void)
 
 
 String readLine = "";
-int przeslanyBajt = 0;
 String bajt2;
 String key;
 String value;
 void ReadDataFromTECH()
 {
-
-#ifdef DEBUG
-	if (millis() % 1000 == 0)
-	{
-		readLine = "0226fff41bdc59eb1be64c141bf000001bfa0053021809d1";
-		Serial.println("linia");
-		Serial.println(ESP.getFreeHeap());
-		Serial.println(millis());
-		LEDOn(ledBlue);
-	}
-	else
-	{
-		readLine = "";
-	}
-	{
+#ifdef SIMULATE
+	SimulateTECH();
 #else
 	if (Serial.available() > 0)
+		ProcessByte(Serial.read());
+#endif
+}
+
+void ProcessByte(int przeslanyBajt)
+{
 	{
 		LEDOn(ledBlue);
 		bajt2 = "";
-		przeslanyBajt = Serial.read();
 		if (przeslanyBajt < 0)
-    {
-      SendLog("Bad_BYTE_" + readLine);
-    }
+		{
+			SendLog("Bad_BYTE_" + readLine);
+		}
 
 		if (przeslanyBajt < 16)
 		{
@@ -188,14 +187,13 @@ void ReadDataFromTECH()
 		bajt2 += String(przeslanyBajt, HEX);
 		readLine += bajt2;
 
-    if (readLine.length() == 4 && readLine != "0226")
-    { // błędny początek ramki
-      countErrorStart++; // bez SendLog - kazdy GET blokuje odczyt
+		if (readLine.length() == 4 && readLine != "0226")
+		{ // błędny początek ramki
+			countErrorStart++; // bez logowania - nie blokujemy odczytu
 
-      readLine = readLine.substring(2); // wytnijmy jeden znak, aż trafimy na dobry ciąg. Tylko jeden znak, bo czasami coś sie dzieje, że string ma nieparzystą ilośc znaków. I wtedy długo by szukał nowej ramki. Jakby to nie był jednak prawdziwy początek ramki, to potem wywali CRC i będzie ok
-    }
+			readLine = readLine.substring(2); // wytnij jeden bajt (2 znaki hex) i szukaj dalej poczatku ramki
+		}
 
-#endif 
 		if (readLine.length() >= 16 && readLine.substring(readLine.length() - 8, readLine.length() - 4) == "0218" && (readLine.length() % 8 == 0))
 		{
 			countReceivedFrame++;
@@ -247,9 +245,6 @@ void ReadDataFromTECH()
 				SendLog("Bad_CRC_" + readLine);
 
 				countErrorCRC++;
-#ifdef DEBUG
-				Serial.println("CRC Error !");
-#endif
 			}
 			readLine = "";
 		}
@@ -290,9 +285,7 @@ void HandleWWWClient()
 
 		// Read the first line of the request
 		String req = client.readStringUntil('\r');
-#ifdef DEBUG
-		Serial.println(req);
-#endif
+		DBG("WWW " + req);
 
 		//   client.flush();
 
@@ -469,9 +462,7 @@ void SaveAndSendData(String key, String value)
 	mypin[key] = value;
 	PublishValue(key, value);
 
-  #ifdef DEBUG
-    Serial.println(key + " " + value);
-  #endif
+	DBG("Zmiana " + key + " " + value);
 }
 
 // --- przeliczanie wartosci z TECH ---
@@ -519,6 +510,70 @@ void SendLog(String msg)
 	if (mqtt.connected())
 		mqtt.publish(MQTT_BASE "/log", msg.c_str());
 }
+
+// --- tryby testowe ---
+
+void DebugLog(String msg)
+{
+	if (mqtt.connected())
+		mqtt.publish(MQTT_BASE "/debug", msg.c_str());
+}
+
+#ifdef SIMULATE
+unsigned long lastSim = 0;
+
+// Buduje ramke jak ze sterownika: 0226 FFF4 [rejestr wartosc]... 0218 CRC
+// i przepuszcza ja bajt po bajcie przez ten sam kod co prawdziwy odczyt.
+void SimulateTECH()
+{
+	if (millis() - lastSim < 5000)
+		return;
+	lastSim = millis();
+
+	unsigned long t = millis() / 5000; // krok symulacji
+	int16_t tempSolar = -50 + (t * 37) % 900;   // -5,0 .. 84,9 C (sprawdza tez ujemne)
+	int16_t tempTank = 300 + (t * 7) % 300;     // 30,0 .. 59,9 C
+	uint16_t pumpOn = (tempSolar > tempTank + 50) ? 1 : 0;
+	uint16_t pumpPower = pumpOn ? 30 + (t * 13) % 70 : 0;
+	uint16_t power = pumpOn ? (t * 3) % 60 : 0;  // x0,1 kW
+	uint16_t daily = (t / 4) % 300;              // x0,1 kWh
+
+	uint16_t regs[][2] = {
+		{ 0x1701, (uint16_t)tempSolar },
+		{ 0x1702, (uint16_t)tempTank },
+		{ 0x1705, 0 },  // tryb auto
+		{ 0x1744, pumpOn },
+		{ 0x1757, pumpPower },
+		{ 0x1b98, power },
+		{ 0x1b99, daily },
+	};
+	const int n = sizeof(regs) / sizeof(regs[0]);
+
+	uint8_t frame[4 + n * 4 + 4];
+	int len = 0;
+	frame[len++] = 0x02; frame[len++] = 0x26;
+	frame[len++] = 0xFF; frame[len++] = 0xF4;
+	for (int i = 0; i < n; i++)
+	{
+		frame[len++] = regs[i][0] >> 8; frame[len++] = regs[i][0] & 0xFF;
+		frame[len++] = regs[i][1] >> 8; frame[len++] = regs[i][1] & 0xFF;
+	}
+
+	// CRC-16/MCRF4XX z bajtow przed 0218, wysylane big-endian
+	uint16_t crc = 0xFFFF;
+	for (int i = 0; i < len; i++)
+	{
+		crc ^= frame[i];
+		for (int b = 0; b < 8; b++)
+			crc = (crc & 1) ? (crc >> 1) ^ 0x8408 : (crc >> 1);
+	}
+	frame[len++] = 0x02; frame[len++] = 0x18;
+	frame[len++] = crc >> 8; frame[len++] = crc & 0xFF;
+
+	for (int i = 0; i < len; i++)
+		ProcessByte(frame[i]);
+}
+#endif
 
 // --- MQTT / Home Assistant ---
 
@@ -705,9 +760,7 @@ unsigned int crc16_mcrf4xx(String data)
 		}
 	}
 
-#ifdef DEBUG
-	Serial.println("frameCRC: " + data + " Calculated CRC: " + String(calculatedCRC, HEX));
-#endif
+	DBG("Ramka " + data + " CRC obliczone: " + String(calculatedCRC, HEX));
 	return calculatedCRC;
 }
 
