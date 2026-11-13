@@ -153,7 +153,7 @@ void setup(void)
 	ArduinoOTA.setHostname("ESP8266Zasobnik");
 	ArduinoOTA.setPassword(SECRET_OTA_PASSWORD);
 	ArduinoOTA.onStart([]() { SendLog("OTA_start"); LEDOn(ledRed); LEDOn(ledBlue); });
-	ArduinoOTA.onError([](ota_error_t e) { SendLog("OTA_blad_" + String(e)); LEDOff(ledBlue); });
+	ArduinoOTA.onError([](ota_error_t e) { SendLog("OTA_blad_" + String((int)e)); LEDOff(ledBlue); });
 	ArduinoOTA.begin();
 	httpUpdater.setup(&updateServer, "/update", "admin", SECRET_OTA_PASSWORD);
 	updateServer.begin();
@@ -460,6 +460,21 @@ String ValuesHTML()
 	if (mypin.indexOf(TechEnergyWeek) != -1) s += "Uzysk tygodniowy: " + String(HexToLong(mypin[TechEnergyWeek])) + " kWh<br/>";
 	if (mypin.indexOf(TechEnergyMonth) != -1) s += "Uzysk miesieczny: " + String(HexToLong(mypin[TechEnergyMonth])) + " kWh<br/>";
 	if (mypin.indexOf(TechEnergy1B9C) != -1) s += "1B9C (?): " + String(HexToLong(mypin[TechEnergy1B9C])) + "<br/>";
+	if (mypin.indexOf(TechTime) != -1)
+	{
+		long v = HexToLong(mypin[TechTime]);
+		char buf[64];
+		sprintf(buf, "Zegar sterownika: %02ld:%02ld", (v >> 8) & 0xFF, v & 0xFF);
+		s += buf;
+		time_t now = time(nullptr);
+		if (now > 1600000000)
+		{
+			struct tm* t = localtime(&now);
+			sprintf(buf, " (czas z NTP: %02d:%02d)", t->tm_hour, t->tm_min);
+			s += buf;
+		}
+		s += "<br/>";
+	}
 	if (mypin.indexOf(TechState) != -1) s += "Stan: " + StateName(HexToLong(mypin[TechState])) + " (" + mypin[TechState] + ")<br/>";
 	return s;
 }
