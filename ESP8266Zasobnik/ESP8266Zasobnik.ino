@@ -1020,8 +1020,8 @@ void PublishDiscovery()
 	// zapis do sterownika (testy)
 	PublishDiscoveryEntity("button", "sync_clock", "Ustaw zegar sterownika", nullptr,
 		",\"cmd_t\":\"" MQTT_BASE "/cmd/sync_clock\",\"pl_prs\":\"PRESS\",\"ent_cat\":\"config\",\"ic\":\"mdi:clock-edit-outline\"");
-	PublishDiscoveryEntity("text", "raw_write", "Zapis rejestru (test)", "tx",
-		",\"cmd_t\":\"" MQTT_BASE "/cmd/raw\",\"max\":40,\"ent_cat\":\"config\",\"ic\":\"mdi:send\"");
+	// pole testowe usuniete z HA (zapis recznie nadal mozliwy przez temat tech_solar/cmd/raw)
+	mqtt.publish(String("homeassistant/text/" + deviceId + "/raw_write/config").c_str(), "", true);
 
 	// diagnostyka
 	PublishDiscoveryEntity("sensor", "clock", "Zegar sterownika", "clock",
