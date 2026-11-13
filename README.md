@@ -79,6 +79,13 @@ W *Narzędzia → Flash Size* musi być opcja z OTA (domyślne dla NodeMCU 1.0: 
 
 ![Schemat](docs/schemat.png)
 
+Źródło: `docs/esp8266_tech.sch` (EAGLE 9.7). Uwagi do pliku:
+- **R3 pin 2 nie jest podłączony** (przewód kończy się luzem) – na płytce idzie do **GND**, do poprawienia w EAGLE
+- IC1 (REG1117) to stabilizator wbudowany w Witty Cloud, a nie osobny element
+- C1 na płytce to tantal 100 µF (na schemacie 3,3 µF)
+
+Wyprowadzenia Witty Cloud: [docs/witty-cloud-pinout.jpg](docs/witty-cloud-pinout.jpg) (grafika: schatenseite.de)
+
 Opis połączeń (stan faktyczny na płytce):
 
 | Element | Połączenie |
