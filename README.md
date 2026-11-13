@@ -45,3 +45,17 @@ Na początku `ESP8266Zasobnik.ino`:
 - czerwona – start / brak połączenia z MQTT
 - zielona – wysyłanie do MQTT
 - niebieska – odbiór bajtów ze sterownika
+
+## Zapis do sterownika (testy)
+
+Nadawanie przez sprzętowy TX (GPIO1) → T1 → pin 1 RJ12, zwykły UART 9600 8N1 (T1 sam odwraca sygnał).
+Ramka: `02 26 | adres | rejestr | wartość | 02 18 | CRC`, wysyłana ok. 50 ms po pustym zapytaniu
+`0226FFF40218` (lub po dowolnej ramce, jeśli przez 20 s nie było zapytania).
+
+Reguła z forum: rejestr odczytu = 5000 + numer parametru, rejestr zapisu = numer parametru
+(np. odczyt `1620` = 5664 → zapis `0298` = 664).
+
+- przycisk **Ustaw zegar sterownika** – czas z NTP na `0298` (bajt godzina, bajt minuty); efekt widać w encji **Zegar sterownika** (`1620`)
+- pole **Zapis rejestru (test)** / temat `tech_solar/cmd/raw`: `RRRRVVVV` albo `RRRR VVVV [ADRES] [ODSTĘP_MS]`,
+  np. `0298 1118` (17:24), `0298 1118 fff4`, `0298 1118 0000 2` (2 ms między bajtami)
+- wysłana ramka: `tech_solar/tx`, logi `TX_...` na `tech_solar/log`
