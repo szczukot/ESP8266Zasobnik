@@ -1,10 +1,8 @@
 #include <WiFiClient.h>
-#include <ESP8266HTTPClient.h>
 #include <stddef.h>
 #include <HashMap.h>
 #include <SoftwareSerial.h>
 #include <ESP8266WiFi.h>
-#include "base64.h"
 
 //#define DEBUG
 
@@ -32,19 +30,6 @@ const char* password = SECRET_WIFI_PASSWORD;
 //1c04
 //17b9 ?? data ??
 
-// definicje domoticz
-#define IdxTempSolar "164"
-#define IdxTempTank "163"
-#define IdxLogs "165"
-#define IdxPumpPower "166"
-#define IdxPumpOnOff "167"
-
-#define IdxPower "716"
-#define IdxPowerDaily "2037"
-
-//String DomoticzUrl = "http://zg.tits.vot.pl:16010/json.htm?";
-String DomoticzUrl = "http://192.168.1.2:8080/json.htm?";
-
 // definicje ESP8266
 #define rx_pin 3
 #define tx_pin 14
@@ -55,13 +40,11 @@ const int ledRed = 15;
 
 // dane dla serwera HTML
 String contentHTML;
-volatile int lastError = 0;
 volatile int countErrorCRC = 0;
 volatile int countErrorStart = 0;
 volatile int countErrorClientTimeout = 0;
-volatile int countErrorSendGET = 0;
-volatile int countSendGET = 0;
 volatile int countReceivedFrame = 0;
+String lastLog = "";
 
 WiFiServer server(80);
 WiFiClient client;
@@ -221,7 +204,7 @@ void ReadDataFromTECH()
 							(key == TechMode) ||
               (key == TechPower) ||
               (key == TechPowerDaily))
-						{ // na start wysylamy tylko te ktore uzywamy w domoticzu
+						{ // na start zapisujemy tylko te ktore uzywamy
               LEDOff(ledBlue);
 
 							SaveAndSendData(key, value);
@@ -357,11 +340,11 @@ void HandleWWWClient()
 			s += "<br/>";
 			s += "Error start: " + String(countErrorStart);
 			s += "<br/>";
-			s += "Error GET: " + String(countErrorSendGET) + "   Last error: " + String(lastError);
-			s += "<br/>";
-			s += "Send GET: " + String(countSendGET);
-			s += "<br/>";
 			s += "Received frames: " + String(countReceivedFrame);
+			s += "<br/>";
+			s += "Last log: " + lastLog;
+			s += "<br/><br/>";
+			s += ValuesHTML();
 		}
 		s += "</html>\n";
 
@@ -443,31 +426,10 @@ String SystemUptime()
 
 void SaveAndSendData(String key, String value)
 {
-	if (key == TechTempSolar) // temperatura na panelu
-	{
-		SendTemp(value, IdxTempSolar);
-	}
-	else if (key == TechTempTank) // temperatura w zasobniku
-	{
-		SendTemp(value, IdxTempTank);
-	}
-	else if (key == TechPumpOnOff) // zalaczenie pompy
-	{
-		SendSwitch(value != "0000", IdxPumpOnOff);
-	}
-	else if (key == TechPumpPower) // PWM pompy
-	{
-		SendLevel(value, IdxPumpPower);
-	}
-	else if (key == TechPower) // aktualna moc
-	{
-		SendPower(value, IdxPower);
-	}
-  else if (key == TechPowerDaily) // dzienny zysk
-	{
-		SendPower(value, IdxPowerDaily);
-	}
-	else if ((key != TechTime)  // pomijamy zmiane godziny
+	if ((key != TechTempSolar) && (key != TechTempTank) && (key != TechMode)
+		&& (key != TechPumpOnOff) && (key != TechPumpPower)
+		&& (key != TechPower) && (key != TechPowerDaily)
+		&& (key != TechTime)  // pomijamy zmiane godziny
 		&& (key != "1742")  // to samo co 1701 (moe jakis offset mozna ustawic na regulatorze)
 		&& (key != "1743")) // to samo co 1702 (moe jakis offset mozna ustawic na regulatorze)
 	{
@@ -487,127 +449,48 @@ void SaveAndSendData(String key, String value)
   #endif
 }
 
-HTTPClient http;  //Declare an object of class HTTPClient
-WiFiClient httpClient; // osobny klient dla HTTP (nie ten od serwera WWW)
+// --- przeliczanie wartosci z TECH ---
+
+bool IsNoSensor(const String& hex)
+{
+	return strtol(hex.c_str(), NULL, 16) == 0xF830; // brak czujnika
+}
+
+float HexToTemp(const String& hex)
+{
+	return (int16_t)strtol(hex.c_str(), NULL, 16) / 10.0; // ze znakiem - ujemne temperatury
+}
+
+long HexToLong(const String& hex)
+{
+	return strtol(hex.c_str(), NULL, 16);
+}
+
+String ModeName(long mode)
+{
+	if (mode == 0) return "auto";
+	if (mode == 1) return "odmrażanie";
+	if (mode == 2) return "urlopowy";
+	return String(mode);
+}
+
+String ValuesHTML()
+{
+	String s;
+	if (mypin.indexOf(TechTempSolar) != -1) s += "Temp. panel: " + String(HexToTemp(mypin[TechTempSolar]), 1) + " C<br/>";
+	if (mypin.indexOf(TechTempTank) != -1) s += "Temp. zasobnik: " + String(HexToTemp(mypin[TechTempTank]), 1) + " C<br/>";
+	if (mypin.indexOf(TechMode) != -1) s += "Tryb: " + ModeName(HexToLong(mypin[TechMode])) + "<br/>";
+	if (mypin.indexOf(TechPumpOnOff) != -1) s += "Pompa: " + String(HexToLong(mypin[TechPumpOnOff]) ? "ON" : "OFF") + "<br/>";
+	if (mypin.indexOf(TechPumpPower) != -1) s += "Moc pompy: " + String(HexToLong(mypin[TechPumpPower])) + " %<br/>";
+	if (mypin.indexOf(TechPower) != -1) s += "Uzysk chwilowy: " + String(HexToLong(mypin[TechPower]) / 10.0, 1) + " kW<br/>";
+	if (mypin.indexOf(TechPowerDaily) != -1) s += "Uzysk dzienny: " + String(HexToLong(mypin[TechPowerDaily]) / 10.0, 1) + " kWh<br/>";
+	return s;
+}
 
 void SendLog(String msg)
 {
 	msg += "_free_" + String(ESP.getFreeHeap());
-	SendGET(DomoticzUrl + "type=command&param=udevice&idx=165&nvalue=0&svalue=" + msg); //Specify request destination
-}
-
-void SendTemp(String temp, String idx)
-{
-	int16_t dec = (int16_t)strtol(temp.c_str(), NULL, 16); // ze znakiem - ujemne temperatury
-	if ((uint16_t)dec == 0xF830) return; // brak czujnika
-	float flo = dec / 10.0;
-	String str = String(flo, 1);
-//	SendLog("Temp_" + str);
-	SendGET(DomoticzUrl + "type=command&param=udevice&idx=" + idx + "&nvalue=0&svalue=" + str); //Specify request destination
-}
-
-void SendLevel(String level, String idx)
-{
-	long dec = strtol(level.c_str(), NULL, 16);
-	String str = String(dec);
-//	SendLog("Level_" + str);
-	SendGET(DomoticzUrl + "type=command&param=switchlight&idx=" + idx + "&switchcmd=Set%20Level&level=" + str); //Specify request destination
-}
-
-void SendSwitch(bool on, String idx)
-{
-	String str = "Off";
-	if (on)
-	{
-		str = "On";
-	}
-//	SendLog("Switch_" + str);
-	SendGET(DomoticzUrl + "type=command&param=switchlight&idx=" + idx + "&switchcmd=" + str); //Specify request destination
-}
-
-void SendPower(String temp, String idx)
-{
-	long dec = strtol(temp.c_str(), NULL, 16);
-	float flo = (dec / 10.0) * 1000.0;
-	String str = String(flo, 1);
-//	SendLog("Temp_" + str);
-	SendGET(DomoticzUrl + "type=command&param=udevice&idx=" + idx + "&nvalue=0&svalue=" + str + ";0"); //Specify request destination
-}
-
-
-void SendGET(String get)
-{
-  if (WiFi.status() != WL_CONNECTED)
-	{ //Check WiFi connection status
-    WiFi.reconnect();
-  }
-
-	if (WiFi.status() == WL_CONNECTED)
-	{ //Check again WiFi connection status
-#ifdef DEBUG
-		Serial.println("Send GET");
-#endif
-		LEDOn(ledGreen);
-
-    int rssi = WiFi.RSSI();
-    String getWithRSSI = get + "&rssi=" + String(round(dBmtoPercentage(rssi) / 10.0));
-
-		http.begin(httpClient, getWithRSSI);
-
-    //String auth = base64::encode("login:haslo");
-    http.addHeader("Authorization", "Basic " SECRET_DOMOTICZ_AUTH_BASE64);
-
-		int httpCode = http.GET(); //Send the request
-
-		if (httpCode == 200)
-		{ //Check the returning code
-
-#ifdef DEBUG
-			String payload = http.getString();  //Get the request response payload
-			Serial.println("Receive: (" + String(httpCode) + ") " + payload);
-#endif
-			countSendGET++;
-
-      LEDOff(ledGreen);
-		}
-		else
-		{
-      lastError = httpCode;
-#ifdef DEBUG
-			Serial.println("GET Error: " + String(httpCode));
-#endif
-			countErrorSendGET++;
-
-      LEDOff(ledGreen);
-
-      int errorType = 3;
-      if (httpCode < 0)
-      {
-        errorType = 5;
-      }
-
-      // mrugnij czerwoną diodą że błąd
-      for (int i = 0; i < errorType; i++)
-      {
-        delay(200);
-        LEDOn(ledRed);
-        delay(200);
-        LEDOff(ledRed);
-      }  
-		}
-
-		http.end();  //Close connection
-	}
-  else
-  { // brak połączenia z WIFI
-      for (int i = 0; i < 2; i++)
-      {
-        delay(500);
-        LEDOn(ledRed);
-        delay(500);
-        LEDOff(ledRed);
-      }
-  }
+	lastLog = msg;
 }
 
 
@@ -689,49 +572,4 @@ void LEDOff(int pin)
 //	Serial.println("frameCRC: " + String(frameCRC) + " Calculated CRC: " + String(crc, HEX));
 //#endif
 //	return crc;
-//}
-
-
-//const char* host = "zg.tits.vot.pl";
-//const char* streamId = "....................";
-//const char* privateKey = "....................";
-//
-//void SendData2()
-//{
-//	// Use WiFiClient class to create TCP connections
-//	WiFiClient client;
-//	const int httpPort = 16010;
-//	if (!client.connect(host, httpPort))
-//	{
-//		//  Serial.println("connection failed");
-//		return;
-//	}
-//
-//	// We now create a URI for the request
-//	String url = "/input/";
-//	url += streamId;
-//	url += "?private_key=";
-//	url += privateKey;
-//
-//
-//	// This will send the request to the server
-//	client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-//		"Host: " + host + "\r\n" +
-//		"Connection: close\r\n\r\n");
-//	unsigned long timeout = millis();
-//	while (client.available() == 0) {
-//		if (millis() - timeout > 5000) {
-//			//    Serial.println(">>> Client Timeout !");
-//			client.stop();
-//			return;
-//		}
-//	}
-//
-//	// Read all the lines of the reply from server and print them to Serial
-//	while (client.available()) {
-//		//  String line = client.readStringUntil('\r');
-//		//  Serial.print(line);
-//	}
-//
-//	client.stop();
 //}
