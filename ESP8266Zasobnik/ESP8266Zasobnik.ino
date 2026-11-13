@@ -119,6 +119,7 @@ struct ModeVerify
 };
 ModeVerify modeVerify = { -1, 0, 0 };
 int countAutoClockSync = 0;
+int clockDriftState = -1; // -1 nieznany, 0 OK, 1 rozjechany (wysylane tylko przy zmianie)
 
 CreateHashMap(mypin, String, String, 255);
 
@@ -666,10 +667,6 @@ void CheckControllerClock(const String& value)
 	time_t now = time(nullptr);
 	if (now < 1600000000)
 		return; // brak czasu z NTP
-	if (txCmd.pending)
-		return;
-	if (lastAutoClockSync != 0 && millis() - lastAutoClockSync < CLOCK_SYNC_MIN_INTERVAL)
-		return;
 
 	long v = HexToLong(value);
 	int ctrlMin = ((v >> 8) & 0xFF) * 60 + (v & 0xFF);
@@ -680,7 +677,20 @@ void CheckControllerClock(const String& value)
 	if (diff > 720) diff -= 1440;   // przejscie przez polnoc
 	if (diff < -720) diff += 1440;
 
-	if (abs(diff) >= CLOCK_MAX_DIFF_MIN)
+	// encja "Zegar rozjechany" - tylko przy zmianie stanu
+	int drift = (abs(diff) >= CLOCK_MAX_DIFF_MIN) ? 1 : 0;
+	if (drift != clockDriftState && mqtt.connected())
+	{
+		mqtt.publish(MQTT_BASE "/clock_drift", drift ? "ON" : "OFF", true);
+		clockDriftState = drift;
+	}
+
+	if (txCmd.pending)
+		return;
+	if (lastAutoClockSync != 0 && millis() - lastAutoClockSync < CLOCK_SYNC_MIN_INTERVAL)
+		return;
+
+	if (drift)
 	{
 		lastAutoClockSync = millis();
 		countAutoClockSync++;
@@ -1040,6 +1050,10 @@ void PublishDiscovery()
 	mqtt.publish(String("homeassistant/text/" + deviceId + "/raw_write/config").c_str(), "", true);
 
 	// diagnostyka
+	PublishDiscoveryEntity("binary_sensor", "clock_drift", "Zegar rozjechany", "clock_drift",
+		",\"dev_cla\":\"problem\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:clock-alert-outline\"");
+	clockDriftState = -1; // po (ponownym) polaczeniu wyslij stan od nowa
+
 	// zegar sterownika tylko na stronie WWW (zmienia sie co minute - zasmiecal historie HA)
 	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/clock/config").c_str(), "", true);
 	PublishDiscoveryEntity("sensor", "reg_1b9c", "Rejestr 1B9C (uzysk roczny?)", "reg_1b9c",
