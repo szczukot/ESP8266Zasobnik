@@ -56,7 +56,7 @@ Reguła z forum: rejestr odczytu = 5000 + numer parametru, rejestr zapisu = nume
 (np. odczyt `1620` = 5664 → zapis `0298` = 664).
 
 - **automatycznie**: gdy zegar sterownika (`1620`) różni się od NTP o ≥ 2 min, ESP sam go ustawia (nie częściej niż co 10 min; `CLOCK_MAX_DIFF_MIN` w kodzie)
-- przycisk **Ustaw zegar sterownika** – czas z NTP na `0298` (bajt godzina, bajt minuty); efekt widać w encji **Zegar sterownika** (`1620`)
+- przycisk **Ustaw zegar sterownika** – czas z NTP na `0298` (bajt godzina, bajt minuty); efekt widać na stronie WWW urządzenia (`1620`, z czasem odbioru wg NTP)
 - lista **Tryb pracy** (auto / odmrażanie / urlopowy) – zapis na `037D` (parametr 893, odczyt `1705`);
   jeśli w ciągu 60 s `1705` nie pokaże nowego trybu, druga próba wprost na `1705`;
   wynik w logu: `Tryb_ok_<tryb>_rej_<rejestr>`, `Tryb_brak_potwierdzenia_proba_1705` albo `Tryb_zapis_nie_zadzialal`
