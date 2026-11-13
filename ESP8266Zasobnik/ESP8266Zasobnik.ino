@@ -57,6 +57,7 @@ const int ledRed = 15;
 String contentHTML;
 volatile int lastError = 0;
 volatile int countErrorCRC = 0;
+volatile int countErrorStart = 0;
 volatile int countErrorClientTimeout = 0;
 volatile int countErrorSendGET = 0;
 volatile int countSendGET = 0;
@@ -124,6 +125,7 @@ void setup(void)
 	server.begin();
 	contentHTML += "HTTP server started<br/>";
 
+	Serial.setRxBufferSize(1024); // HTTP blokuje petle - wiekszy bufor, zeby nie gubic bajtow
 	Serial.begin(9600);
 //	txSerial.begin(9600);
 
@@ -188,13 +190,13 @@ void ReadDataFromTECH()
 
     if (readLine.length() == 4 && readLine != "0226")
     { // błędny początek ramki
-      SendLog("Bad_START_" + readLine);
+      countErrorStart++; // bez SendLog - kazdy GET blokuje odczyt
 
-      readLine = readLine.substring(1); // wytnijmy jeden znak, aż trafimy na dobry ciąg. Tylko jeden znak, bo czasami coś sie dzieje, że string ma nieparzystą ilośc znaków. I wtedy długo by szukał nowej ramki. Jakby to nie był jednak prawdziwy początek ramki, to potem wywali CRC i będzie ok
+      readLine = readLine.substring(2); // wytnijmy jeden znak, aż trafimy na dobry ciąg. Tylko jeden znak, bo czasami coś sie dzieje, że string ma nieparzystą ilośc znaków. I wtedy długo by szukał nowej ramki. Jakby to nie był jednak prawdziwy początek ramki, to potem wywali CRC i będzie ok
     }
 
 #endif 
-		if (readLine.length() > 16 && readLine.substring(readLine.length() - 8, readLine.length() - 4) == "0218" && (readLine.length() % 8 == 0))
+		if (readLine.length() >= 16 && readLine.substring(readLine.length() - 8, readLine.length() - 4) == "0218" && (readLine.length() % 8 == 0))
 		{
 			countReceivedFrame++;
 
@@ -255,7 +257,7 @@ void ReadDataFromTECH()
 		// dla bezpieczestwa
 		if (readLine.length() > 2048)
 		{
-      SendLog("Bad_LONGLINE_" + readLine);
+      SendLog("Bad_LONGLINE_" + readLine.substring(0, 64));
 
 			readLine = "";
 		}
@@ -292,7 +294,6 @@ void HandleWWWClient()
 		Serial.println(req);
 #endif
 
-		unsigned int calculatedCRC = crc16_mcrf4xx(readLine);
 		//   client.flush();
 
 		String s = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>";
@@ -353,6 +354,8 @@ void HandleWWWClient()
 			s += "Error client timeout: " + String(countErrorClientTimeout);
 			s += "<br/>";
 			s += "Error CRC: " + String(countErrorCRC);
+			s += "<br/>";
+			s += "Error start: " + String(countErrorStart);
 			s += "<br/>";
 			s += "Error GET: " + String(countErrorSendGET) + "   Last error: " + String(lastError);
 			s += "<br/>";
@@ -485,6 +488,7 @@ void SaveAndSendData(String key, String value)
 }
 
 HTTPClient http;  //Declare an object of class HTTPClient
+WiFiClient httpClient; // osobny klient dla HTTP (nie ten od serwera WWW)
 
 void SendLog(String msg)
 {
@@ -494,7 +498,8 @@ void SendLog(String msg)
 
 void SendTemp(String temp, String idx)
 {
-	long dec = strtol(temp.c_str(), NULL, 16);
+	int16_t dec = (int16_t)strtol(temp.c_str(), NULL, 16); // ze znakiem - ujemne temperatury
+	if ((uint16_t)dec == 0xF830) return; // brak czujnika
 	float flo = dec / 10.0;
 	String str = String(flo, 1);
 //	SendLog("Temp_" + str);
@@ -547,7 +552,7 @@ void SendGET(String get)
     int rssi = WiFi.RSSI();
     String getWithRSSI = get + "&rssi=" + String(round(dBmtoPercentage(rssi) / 10.0));
 
-		http.begin(client, getWithRSSI);
+		http.begin(httpClient, getWithRSSI);
 
     //String auth = base64::encode("login:haslo");
     http.addHeader("Authorization", "Basic " SECRET_DOMOTICZ_AUTH_BASE64);
@@ -614,7 +619,7 @@ unsigned int crc16_mcrf4xx(String data)
 	for (int i = 0; i < frame.length(); i = i + 2)
 	{
 
-		char du[2];
+		char du[3] = {0}; // strtol wymaga zera na koncu
 		du[0] = frame[i];
 		du[1] = frame[i + 1];
 		calculatedCRC ^= strtol(du, NULL, 16);
