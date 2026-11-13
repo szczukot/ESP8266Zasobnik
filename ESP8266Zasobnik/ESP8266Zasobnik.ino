@@ -101,6 +101,12 @@ TxCommand txCmd = { false, 0, 0, 0, 0, 0 };
 String lastTx = "-";
 int countTx = 0;
 
+// automatyczne ustawianie zegara sterownika wg NTP
+#define CLOCK_MAX_DIFF_MIN 2              // od jakiej roznicy (minuty) poprawiac zegar
+#define CLOCK_SYNC_MIN_INTERVAL 600000UL  // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
+unsigned long lastAutoClockSync = 0;
+int countAutoClockSync = 0;
+
 CreateHashMap(mypin, String, String, 255);
 
 
@@ -345,6 +351,8 @@ void HandleWWWClient()
 			s += "MQTT wyslane: " + String(countPublish) + "   bledy polaczenia: " + String(countErrorMqtt);
 			s += "<br/>";
 			s += "TX: " + String(countTx) + "   ostatnia ramka: " + lastTx + (txCmd.pending ? "   (czeka w kolejce)" : "");
+			s += "<br/>";
+			s += "Automatyczne korekty zegara: " + String(countAutoClockSync);
 			s += "<br/><br/>";
 			s += ValuesHTML();
 		}
@@ -405,6 +413,9 @@ void SaveAndSendData(String key, String value)
 	mypin[key] = value;
 	PublishRaw(key, value);   // kazdy rejestr na tech_solar/raw/<rejestr>
 	PublishValue(key, value); // znane rejestry jako encje HA
+
+	if (key == TechTime)
+		CheckControllerClock(value);
 
 	DBG("Zmiana " + key + " " + value);
 }
@@ -627,6 +638,35 @@ void QueueRaw(String p)
 	uint16_t addr = (n >= 3) ? strtol(tok[2].c_str(), NULL, 16) : 0x0000;
 	uint8_t gap = (n >= 4) ? tok[3].toInt() : 0;
 	QueueTx(addr, reg, val, gap);
+}
+
+// Porownuje zegar sterownika (1620) z czasem z NTP i w razie roznicy ustawia go automatycznie.
+void CheckControllerClock(const String& value)
+{
+	time_t now = time(nullptr);
+	if (now < 1600000000)
+		return; // brak czasu z NTP
+	if (txCmd.pending)
+		return;
+	if (lastAutoClockSync != 0 && millis() - lastAutoClockSync < CLOCK_SYNC_MIN_INTERVAL)
+		return;
+
+	long v = HexToLong(value);
+	int ctrlMin = ((v >> 8) & 0xFF) * 60 + (v & 0xFF);
+	struct tm* t = localtime(&now);
+	int ntpMin = t->tm_hour * 60 + t->tm_min;
+
+	int diff = ntpMin - ctrlMin;
+	if (diff > 720) diff -= 1440;   // przejscie przez polnoc
+	if (diff < -720) diff += 1440;
+
+	if (abs(diff) >= CLOCK_MAX_DIFF_MIN)
+	{
+		lastAutoClockSync = millis();
+		countAutoClockSync++;
+		SendLog("Zegar_auto_roznica_" + String(diff) + "min");
+		QueueClockSync();
+	}
 }
 
 void QueueClockSync()
