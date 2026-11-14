@@ -124,10 +124,11 @@ struct ModeVerify
 ModeVerify modeVerify = { -1, 0, 0 };
 int countAutoClockSync = 0;
 // licznik zmian kazdego rejestru od startu ESP - odroznia nastawy (stale) od wartosci zmiennych
-#define RAW_MAX 160
+#define RAW_MAX 255 // tyle co pojemnosc mypin (sterownik wysyla ok. 200 rejestrow)
 char rawKey[RAW_MAX][5];
 uint16_t rawCnt[RAW_MAX];
 int rawN = 0;
+unsigned long rawOverflow = 0; // rejestry, ktore nie zmiescily sie w liczniku
 bool rawSummaryDirty = false;
 unsigned long lastRawSummary = 0;
 String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
@@ -449,7 +450,10 @@ int RawIndex(const String& key)
 		if (key == rawKey[i])
 			return i;
 	if (rawN >= RAW_MAX)
+	{
+		rawOverflow++;
 		return -1;
+	}
 	strncpy(rawKey[rawN], key.c_str(), 4);
 	rawKey[rawN][4] = 0;
 	rawCnt[rawN] = 0;
@@ -542,7 +546,10 @@ String RawHTML()
 		else
 			cst += line + "<br/>";
 	}
-	return "<br/><b>Rejestry zmienne od startu ESP</b> (hex (bez znaku / ze znakiem)):<br/>" + var +
+	String info = "<br/>Rejestrow: " + String(rawN) + " / " + String(RAW_MAX);
+	if (rawOverflow)
+		info += " - BRAK MIEJSCA, pominieto: " + String(rawOverflow);
+	return info + "<br/><b>Rejestry zmienne od startu ESP</b> (hex (bez znaku / ze znakiem)):<br/>" + var +
 		"<br/><b>Rejestry stale:</b><br/>" + cst;
 }
 
