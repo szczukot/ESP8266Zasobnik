@@ -129,6 +129,13 @@ char rawKey[RAW_MAX][5];
 uint16_t rawCnt[RAW_MAX];
 int rawN = 0;
 unsigned long rawOverflow = 0; // rejestry, ktore nie zmiescily sie w liczniku
+// rejestry zapisu (< 0x1388) osobno - nie zajmuja miejsca w mypin ani w licznikach odczytu
+#define WR_MAX 160
+char wrKey[WR_MAX][5];
+uint16_t wrVal[WR_MAX];
+uint16_t wrCnt[WR_MAX];
+int wrN = 0;
+unsigned long wrOverflow = 0;
 bool rawSummaryDirty = false;
 unsigned long lastRawSummary = 0;
 String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
@@ -291,8 +298,11 @@ void ProcessByte(int przeslanyBajt)
 					key = readLine.substring(i, i + 4);
 					value = readLine.substring(i + 4, i + 8);
 
+					// rejestry zapisu osobno (zwykle 0000, nie zasmiecaja mypin)
+					if (IsWriteReg(key))
+						HandleWriteReg(key, value);
 					// zapisujemy wszystkie rejestry; wysylamy tylko nowe lub zmienione
-					if (mypin.indexOf(key) == -1 || mypin[key] != value)
+					else if (mypin.indexOf(key) == -1 || mypin[key] != value)
 					{
 						LEDOff(ledBlue);
 						SaveAndSendData(key, value);
@@ -543,6 +553,39 @@ String ReadRegFor(const String& key)
 	return String(buf);
 }
 
+// rejestr zapisu z ramki: zapamietuje wartosc, liczy zmiany; zmiana ma znaczenie,
+// bo moze oznaczac, ze ktos (np. panel/modul) wpisal tam wartosc
+void HandleWriteReg(const String& key, const String& value)
+{
+	uint16_t v = HexToLong(value);
+	int i;
+	for (i = 0; i < wrN; i++)
+		if (key == wrKey[i])
+			break;
+	if (i == wrN)
+	{
+		if (wrN >= WR_MAX)
+		{
+			wrOverflow++;
+			return;
+		}
+		strncpy(wrKey[i], key.c_str(), 4);
+		wrKey[i][4] = 0;
+		wrVal[i] = v;
+		wrCnt[i] = 0;
+		wrN++;
+		PublishRaw(key, value, 0);
+		return;
+	}
+	if (wrVal[i] == v)
+		return;
+	wrVal[i] = v;
+	if (wrCnt[i] < 65535)
+		wrCnt[i]++;
+	PublishRaw(key, value, wrCnt[i]);
+	SendLog("Rejestr_zapisu_" + key + "_" + value);
+}
+
 // rejestry podzielone na zmienne (z liczba zmian od startu), stale i adresy zapisu
 String RawHTML()
 {
@@ -553,18 +596,6 @@ String RawHTML()
 		String v = mypin.indexOf(k) != -1 ? mypin[k] : String("?");
 		String up = k;
 		up.toUpperCase();
-		if (IsWriteReg(k))
-		{
-			String r = ReadRegFor(k);
-			r.toUpperCase();
-			wr += up + " -> zapis dla " + r;
-			if (v != "0000")
-				wr += " (wartosc " + v + "!)";
-			if (rawCnt[i] > 0)
-				wr += " - zmian: " + String(rawCnt[i]);
-			wr += "<br/>";
-			continue;
-		}
 		// hex, potem dziesietnie bez znaku i ze znakiem (ujemne np. temperatury)
 		String line = up + " = " + v + " (" + String(HexToLong(v)) + " / " + String((int16_t)HexToLong(v)) + ")";
 		if (rawCnt[i] > 0)
@@ -572,9 +603,25 @@ String RawHTML()
 		else
 			cst += line + "<br/>";
 	}
-	String info = "<br/>Rejestrow: " + String(rawN) + " / " + String(RAW_MAX);
-	if (rawOverflow)
-		info += " - BRAK MIEJSCA, pominieto: " + String(rawOverflow);
+	for (int i = 0; i < wrN; i++)
+	{
+		String up = wrKey[i];
+		up.toUpperCase();
+		String r = ReadRegFor(wrKey[i]);
+		r.toUpperCase();
+		char hv[5];
+		sprintf(hv, "%04x", wrVal[i]);
+		wr += up + " -> zapis dla " + r;
+		if (wrVal[i] != 0)
+			wr += " (wartosc " + String(hv) + " = " + String(wrVal[i]) + "!)";
+		if (wrCnt[i] > 0)
+			wr += " - zmian: " + String(wrCnt[i]);
+		wr += "<br/>";
+	}
+	String info = "<br/>Rejestry odczytu: " + String(rawN) + " / " + String(RAW_MAX) +
+		", zapisu: " + String(wrN) + " / " + String(WR_MAX);
+	if (rawOverflow || wrOverflow)
+		info += " - BRAK MIEJSCA (odczyt " + String(rawOverflow) + ", zapis " + String(wrOverflow) + ")";
 	return info + "<br/><b>Rejestry zmienne od startu ESP</b> (hex (bez znaku / ze znakiem)):<br/>" + var +
 		"<br/><b>Rejestry stale:</b><br/>" + cst +
 		"<br/><b>Rejestry zapisu</b> (odczyt = zapis + 5000, zwykle 0000):<br/>" + wr;
