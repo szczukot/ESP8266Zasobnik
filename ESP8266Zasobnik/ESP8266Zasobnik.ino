@@ -50,7 +50,6 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechPowerDaily "1b99" // uzysk dzienny
 #define TechEnergyWeek "1b9a" // uzysk tygodniowy, kWh bez dzielnika
 #define TechEnergyMonth "1b9b" // uzysk miesieczny, kWh bez dzielnika
-#define TechEnergy1B9C "1b9c" // prawdopodobnie uzysk roczny/calkowity - niepotwierdzone
 #define TechState "157c" // stan sterownika: 0x1E reczna, 0x62 normalna (?), 0x68 przegrzanie kolektora
 
 //#1B98 -> Uzysk chwilowy [0051=>8.1kWh]
@@ -559,7 +558,6 @@ String ValuesHTML()
 	if (mypin.indexOf(TechPowerDaily) != -1) s += "Uzysk dzienny: " + String(HexToLong(mypin[TechPowerDaily]) / 10.0, 1) + " kWh<br/>";
 	if (mypin.indexOf(TechEnergyWeek) != -1) s += "Uzysk tygodniowy: " + String(HexToLong(mypin[TechEnergyWeek])) + " kWh<br/>";
 	if (mypin.indexOf(TechEnergyMonth) != -1) s += "Uzysk miesieczny: " + String(HexToLong(mypin[TechEnergyMonth])) + " kWh<br/>";
-	if (mypin.indexOf(TechEnergy1B9C) != -1) s += "1B9C (?): " + String(HexToLong(mypin[TechEnergy1B9C])) + "<br/>";
 	if (mypin.indexOf(TechTime) != -1)
 	{
 		long v = HexToLong(mypin[TechTime]);
@@ -967,7 +965,7 @@ void MqttConnect()
 
 	// po (ponownym) polaczeniu wyslij wszystkie znane wartosci
 	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily,
-		TechEnergyWeek, TechEnergyMonth, TechEnergy1B9C, TechState };
+		TechEnergyWeek, TechEnergyMonth, TechState };
 	for (const char* k : keys)
 	{
 		if (mypin.indexOf(k) != -1)
@@ -1024,11 +1022,6 @@ void PublishValue(String key, String value)
 	else if (key == TechEnergyMonth)
 	{
 		obj = "energy_month";
-		payload = String(HexToLong(value));
-	}
-	else if (key == TechEnergy1B9C)
-	{
-		obj = "reg_1b9c";
 		payload = String(HexToLong(value));
 	}
 	else if (key == TechState)
@@ -1194,8 +1187,9 @@ void PublishDiscovery()
 	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/raw_summary/config").c_str(), "", true);
 	mqtt.publish(MQTT_BASE "/raw_summary", "", true);
 #endif
-	PublishDiscoveryEntity("sensor", "reg_1b9c", "Rejestr 1B9C (uzysk roczny?)", "reg_1b9c",
-		",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\"");
+	// 1B9C bez osobnej encji - jest wsrod surowych rejestrow (RAW_ENTITIES); usuwamy stara encje i temat
+	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/reg_1b9c/config").c_str(), "", true);
+	mqtt.publish(MQTT_BASE "/reg_1b9c", "", true);
 	PublishDiscoveryEntity("sensor", "rssi", "WiFi RSSI", "diag",
 		",\"dev_cla\":\"signal_strength\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.rssi }}\"");
 	PublishDiscoveryEntity("sensor", "uptime", "Czas pracy", "diag",
