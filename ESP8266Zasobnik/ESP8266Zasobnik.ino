@@ -15,6 +15,9 @@
 //            Mozna sprawdzic MQTT i Home Assistant bez podlaczania do TECH.
 //#define DEBUG
 //#define SIMULATE
+// RAW_ENTITIES - kazdy surowy rejestr jako encja diagnostyczna w HA (historia do rozpracowywania).
+//            Po wylaczeniu ESP sam usuwa te encje z HA (gdy dany rejestr znow przyjdzie).
+#define RAW_ENTITIES
 
 void ProcessByte(int przeslanyBajt);
 void SimulateTECH();
@@ -994,6 +997,12 @@ void PublishRaw(String key, String value)
 	if (key == TechTime || rawAnnounced.indexOf("," + key + ",") != -1)
 		return;
 	String obj = "raw_" + key;
+#ifndef RAW_ENTITIES
+	// wylaczone - usun ewentualna wczesniejsza encje z HA
+	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/" + obj + "/config").c_str(), "", true);
+	rawAnnounced += key + ",";
+	return;
+#endif
 	String name = "Rejestr " + key;
 	name.toUpperCase();
 	name.replace("REJESTR", "Rejestr");

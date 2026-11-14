@@ -37,6 +37,7 @@ Na początku `ESP8266Zasobnik.ino`:
 
 - `#define SIMULATE` – bez sterownika: co 5 s sztuczna ramka z poprawnym CRC,
   zmieniające się temperatury (także ujemne) i pompa. Sprawdza całą drogę aż do HA.
+- `#define RAW_ENTITIES` (domyślnie włączone) – każdy surowy rejestr jako encja diagnostyczna „Rejestr XXXX” w HA z historią; po zakomentowaniu ESP usuwa te encje z HA.
 - `#define DEBUG` – dodatkowe komunikaty na `tech_solar/debug`.
   Nie używa `Serial`, bo `Serial` jest podłączony do sterownika.
 
