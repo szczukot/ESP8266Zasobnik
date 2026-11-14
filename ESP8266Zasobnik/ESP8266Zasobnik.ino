@@ -124,6 +124,13 @@ struct ModeVerify
 };
 ModeVerify modeVerify = { -1, 0, 0 };
 int countAutoClockSync = 0;
+// licznik zmian kazdego rejestru od startu ESP - odroznia nastawy (stale) od wartosci zmiennych
+#define RAW_MAX 160
+char rawKey[RAW_MAX][5];
+uint16_t rawCnt[RAW_MAX];
+int rawN = 0;
+bool rawSummaryDirty = false;
+unsigned long lastRawSummary = 0;
 String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
 int clockDriftState = -1; // -1 nieznany, 0 OK, 1 rozjechany (wysylane tylko przy zmianie)
 
@@ -215,6 +222,13 @@ void loop(void)
 	MqttLoop();
 
 	TxLoop();
+
+	if (rawSummaryDirty && millis() - lastRawSummary > 10000 && mqtt.connected())
+	{
+		PublishRawSummary();
+		rawSummaryDirty = false;
+		lastRawSummary = millis();
+	}
 
 	ReadDataFromTECH();
 }
@@ -375,6 +389,7 @@ void HandleWWWClient()
 			s += "Automatyczne korekty zegara: " + String(countAutoClockSync);
 			s += "<br/><br/>";
 			s += ValuesHTML();
+			s += RawHTML();
 		}
 		s += "</html>\n";
 
@@ -428,10 +443,38 @@ String SystemUptime()
 	return formattedTime;
 }
 
+// zwraca indeks rejestru w liczniku zmian (dodaje nowy); -1 gdy brak miejsca
+int RawIndex(const String& key)
+{
+	for (int i = 0; i < rawN; i++)
+		if (key == rawKey[i])
+			return i;
+	if (rawN >= RAW_MAX)
+		return -1;
+	strncpy(rawKey[rawN], key.c_str(), 4);
+	rawKey[rawN][4] = 0;
+	rawCnt[rawN] = 0;
+	return rawN++;
+}
+
 void SaveAndSendData(String key, String value)
 {
+	// tu trafiamy tylko gdy rejestr jest nowy albo zmienil wartosc
+	bool known = mypin.indexOf(key) != -1;
+	int ri = RawIndex(key);
+	bool summaryChanged = !known; // nowy rejestr
+	if (known && ri >= 0)
+	{
+		if (rawCnt[ri] == 0)
+			summaryChanged = true; // rejestr przeszedl ze stalych do zmiennych
+		if (rawCnt[ri] < 65535)
+			rawCnt[ri]++;
+	}
+
 	mypin[key] = value;
-	PublishRaw(key, value);   // kazdy rejestr na tech_solar/raw/<rejestr>
+	PublishRaw(key, value, ri >= 0 ? rawCnt[ri] : 0);
+	if (summaryChanged)
+		rawSummaryDirty = true; // wysylane z loop() najwyzej co 10 s
 	PublishValue(key, value); // znane rejestry jako encje HA
 
 	if (key == TechTime)
@@ -481,6 +524,24 @@ String StateName(long state)
 	char buf[12];
 	sprintf(buf, "kod 0x%02lX", state & 0xFF);
 	return String(buf);
+}
+
+// rejestry podzielone na zmienne (z liczba zmian od startu) i stale
+String RawHTML()
+{
+	String var = "", cst = "";
+	for (int i = 0; i < rawN; i++)
+	{
+		String k = rawKey[i];
+		String v = mypin.indexOf(k) != -1 ? mypin[k] : String("?");
+		String up = k;
+		up.toUpperCase();
+		if (rawCnt[i] > 0)
+			var += up + "=" + v + " (" + String(rawCnt[i]) + "x) ";
+		else
+			cst += up + "=" + v + " ";
+	}
+	return "<br/>Rejestry zmienne od startu ESP:<br/>" + var + "<br/><br/>Rejestry stale:<br/>" + cst + "<br/>";
 }
 
 String ValuesHTML()
@@ -910,6 +971,7 @@ void MqttConnect()
 			PublishValue(k, mypin[k]);
 	}
 	PublishDiag();
+	rawSummaryDirty = true;
 }
 
 void PublishValue(String key, String value)
@@ -983,7 +1045,7 @@ void PublishValue(String key, String value)
 	countPublish++;
 }
 
-void PublishRaw(String key, String value)
+void PublishRaw(String key, String value, uint16_t changes)
 {
 	if (!mqtt.connected())
 		return;
@@ -1006,7 +1068,7 @@ void PublishRaw(String key, String value)
 	// tryb rozpracowywania rejestrow - kazdy rejestr na tech_solar/raw/<rejestr>
 	// i jako encja diagnostyczna w HA, wiec w historii widac kiedy i jak sie zmienial
 	String payload = "{\"hex\":\"" + value + "\",\"u\":" + String(HexToLong(value)) +
-		",\"s\":" + String((int16_t)HexToLong(value)) + "}";
+		",\"s\":" + String((int16_t)HexToLong(value)) + ",\"zmiany\":" + String(changes) + "}";
 	mqtt.publish(topic.c_str(), payload.c_str(), true);
 
 	// zegar bez encji - zmienia sie co minute i tylko zasmiecalby historie
@@ -1019,6 +1081,39 @@ void PublishRaw(String key, String value)
 		"\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:memory\"";
 	PublishDiscoveryEntity("sensor", obj.c_str(), name.c_str(), ("raw/" + key).c_str(), extra.c_str());
 	rawAnnounced += key + ",";
+}
+
+// lista rejestrow zmiennych (z liczba zmian) i stalych - encja "Rejestry zmienne" w HA
+void PublishRawSummary()
+{
+#ifdef RAW_ENTITIES
+	if (!mqtt.connected())
+		return;
+	int nVar = 0, nConst = 0;
+	String var = "", cst = "";
+	for (int i = 0; i < rawN; i++)
+	{
+		String k = rawKey[i];
+		if (k == TechTime)
+			continue; // zegar wiadomo ze sie zmienia
+		k.toUpperCase();
+		if (rawCnt[i] > 0)
+		{
+			if (nVar) var += " ";
+			var += k;
+			nVar++;
+		}
+		else
+		{
+			if (nConst) cst += " ";
+			cst += k;
+			nConst++;
+		}
+	}
+	String j = "{\"zmienne\":" + String(nVar) + ",\"stale\":" + String(nConst) +
+		",\"lista_zmienne\":\"" + var + "\",\"lista_stale\":\"" + cst + "\"}";
+	mqtt.publish(MQTT_BASE "/raw_summary", j.c_str(), true);
+#endif
 }
 
 void PublishDiag()
@@ -1089,6 +1184,13 @@ void PublishDiscovery()
 
 	// zegar sterownika tylko na stronie WWW (zmienia sie co minute - zasmiecal historie HA)
 	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/clock/config").c_str(), "", true);
+#ifdef RAW_ENTITIES
+	PublishDiscoveryEntity("sensor", "raw_summary", "Rejestry zmienne", "raw_summary",
+		",\"val_tpl\":\"{{ value_json.zmienne }}\",\"json_attr_t\":\"" MQTT_BASE "/raw_summary\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:format-list-checks\"");
+#else
+	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/raw_summary/config").c_str(), "", true);
+	mqtt.publish(MQTT_BASE "/raw_summary", "", true);
+#endif
 	PublishDiscoveryEntity("sensor", "reg_1b9c", "Rejestr 1B9C (uzysk roczny?)", "reg_1b9c",
 		",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\"");
 	PublishDiscoveryEntity("sensor", "rssi", "WiFi RSSI", "diag",
