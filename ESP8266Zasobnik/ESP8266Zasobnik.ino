@@ -529,16 +529,42 @@ String StateName(long state)
 	return String(buf);
 }
 
-// rejestry podzielone na zmienne (z liczba zmian od startu) i stale
+// rejestry ponizej 0x1388 (5000) to adresy zapisu - sterownik wysyla je zawsze z 0000,
+// a odpowiadajacy im rejestr odczytu ma numer o 5000 wiekszy (np. 07DF -> 1B67)
+bool IsWriteReg(const String& key)
+{
+	return HexToLong(key) < 0x1388;
+}
+
+String ReadRegFor(const String& key)
+{
+	char buf[5];
+	sprintf(buf, "%04lx", HexToLong(key) + 0x1388);
+	return String(buf);
+}
+
+// rejestry podzielone na zmienne (z liczba zmian od startu), stale i adresy zapisu
 String RawHTML()
 {
-	String var = "", cst = "";
+	String var = "", cst = "", wr = "";
 	for (int i = 0; i < rawN; i++)
 	{
 		String k = rawKey[i];
 		String v = mypin.indexOf(k) != -1 ? mypin[k] : String("?");
 		String up = k;
 		up.toUpperCase();
+		if (IsWriteReg(k))
+		{
+			String r = ReadRegFor(k);
+			r.toUpperCase();
+			wr += up + " -> zapis dla " + r;
+			if (v != "0000")
+				wr += " (wartosc " + v + "!)";
+			if (rawCnt[i] > 0)
+				wr += " - zmian: " + String(rawCnt[i]);
+			wr += "<br/>";
+			continue;
+		}
 		// hex, potem dziesietnie bez znaku i ze znakiem (ujemne np. temperatury)
 		String line = up + " = " + v + " (" + String(HexToLong(v)) + " / " + String((int16_t)HexToLong(v)) + ")";
 		if (rawCnt[i] > 0)
@@ -550,7 +576,8 @@ String RawHTML()
 	if (rawOverflow)
 		info += " - BRAK MIEJSCA, pominieto: " + String(rawOverflow);
 	return info + "<br/><b>Rejestry zmienne od startu ESP</b> (hex (bez znaku / ze znakiem)):<br/>" + var +
-		"<br/><b>Rejestry stale:</b><br/>" + cst;
+		"<br/><b>Rejestry stale:</b><br/>" + cst +
+		"<br/><b>Rejestry zapisu</b> (odczyt = zapis + 5000, zwykle 0000):<br/>" + wr;
 }
 
 String ValuesHTML()
@@ -1074,9 +1101,16 @@ void PublishRaw(String key, String value, uint16_t changes)
 		",\"s\":" + String((int16_t)HexToLong(value)) + ",\"zmiany\":" + String(changes) + "}";
 	mqtt.publish(topic.c_str(), payload.c_str(), true);
 
-	// zegar bez encji - zmienia sie co minute i tylko zasmiecalby historie
-	if (key == TechTime || rawAnnounced.indexOf("," + key + ",") != -1)
+	if (rawAnnounced.indexOf("," + key + ",") != -1)
 		return;
+	// zegar bez encji - zmienia sie co minute i tylko zasmiecalby historie;
+	// rejestry zapisu bez encji - zawsze 0000 (usuwamy encje z wczesniejszych wersji)
+	if (key == TechTime || IsWriteReg(key))
+	{
+		mqtt.publish(String("homeassistant/sensor/" + deviceId + "/" + obj + "/config").c_str(), "", true);
+		rawAnnounced += key + ",";
+		return;
+	}
 	String name = "Rejestr " + key;
 	name.toUpperCase();
 	name.replace("REJESTR", "Rejestr");
@@ -1097,8 +1131,8 @@ void PublishRawSummary()
 	for (int i = 0; i < rawN; i++)
 	{
 		String k = rawKey[i];
-		if (k == TechTime)
-			continue; // zegar wiadomo ze sie zmienia
+		if (k == TechTime || IsWriteReg(k))
+			continue; // zegar wiadomo ze sie zmienia, rejestry zapisu zawsze 0000
 		k.toUpperCase();
 		if (rawCnt[i] > 0)
 		{
