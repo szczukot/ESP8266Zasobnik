@@ -536,12 +536,15 @@ String RawHTML()
 		String v = mypin.indexOf(k) != -1 ? mypin[k] : String("?");
 		String up = k;
 		up.toUpperCase();
+		// hex, potem dziesietnie bez znaku i ze znakiem (ujemne np. temperatury)
+		String line = up + " = " + v + " (" + String(HexToLong(v)) + " / " + String((int16_t)HexToLong(v)) + ")";
 		if (rawCnt[i] > 0)
-			var += up + "=" + v + " (" + String(rawCnt[i]) + "x) ";
+			var += line + " - zmian: " + String(rawCnt[i]) + "<br/>";
 		else
-			cst += up + "=" + v + " ";
+			cst += line + "<br/>";
 	}
-	return "<br/>Rejestry zmienne od startu ESP:<br/>" + var + "<br/><br/>Rejestry stale:<br/>" + cst + "<br/>";
+	return "<br/><b>Rejestry zmienne od startu ESP</b> (hex (bez znaku / ze znakiem)):<br/>" + var +
+		"<br/><b>Rejestry stale:</b><br/>" + cst;
 }
 
 String ValuesHTML()
