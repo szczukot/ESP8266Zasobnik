@@ -15,8 +15,10 @@
 //            Mozna sprawdzic MQTT i Home Assistant bez podlaczania do TECH.
 //#define DEBUG
 //#define SIMULATE
-// RAW_ENTITIES - kazdy surowy rejestr jako encja diagnostyczna w HA (historia do rozpracowywania).
-//            Po wylaczeniu ESP sam usuwa te encje z HA (gdy dany rejestr znow przyjdzie).
+// RAW_ENTITIES - tryb rozpracowywania rejestrow: kazdy surowy rejestr na tech_solar/raw/<rejestr>
+//            i jako encja diagnostyczna "Rejestr XXXX" w HA (z historia). Znane encje (temperatury,
+//            uzyski, pompa...) dzialaja zawsze. Po wylaczeniu surowe rejestry nie sa wysylane,
+//            a ESP raz sprzata stare encje z HA i stare tematy raw z MQTT.
 #define RAW_ENTITIES
 
 void ProcessByte(int przeslanyBajt);
@@ -986,23 +988,30 @@ void PublishRaw(String key, String value)
 	if (!mqtt.connected())
 		return;
 
-	// surowy podglad do rozpracowywania rejestrow - kazdy rejestr ma encje
-	// diagnostyczna w HA, wiec w historii widac kiedy i jak sie zmienial
 	String topic = String(MQTT_BASE "/raw/") + key;
+	String obj = "raw_" + key;
+
+#ifndef RAW_ENTITIES
+	// wylaczone - nic nie wysylamy; tylko raz na rejestr sprzatamy to,
+	// co zostalo po wczesniejszym wlaczeniu (encja w HA i temat raw w MQTT)
+	if (rawAnnounced.indexOf("," + key + ",") == -1)
+	{
+		mqtt.publish(String("homeassistant/sensor/" + deviceId + "/" + obj + "/config").c_str(), "", true);
+		mqtt.publish(topic.c_str(), "", true);
+		rawAnnounced += key + ",";
+	}
+	return;
+#endif
+
+	// tryb rozpracowywania rejestrow - kazdy rejestr na tech_solar/raw/<rejestr>
+	// i jako encja diagnostyczna w HA, wiec w historii widac kiedy i jak sie zmienial
 	String payload = "{\"hex\":\"" + value + "\",\"u\":" + String(HexToLong(value)) +
 		",\"s\":" + String((int16_t)HexToLong(value)) + "}";
 	mqtt.publish(topic.c_str(), payload.c_str(), true);
 
-	// zegar pomijamy - zmienia sie co minute i tylko zasmiecalby historie
+	// zegar bez encji - zmienia sie co minute i tylko zasmiecalby historie
 	if (key == TechTime || rawAnnounced.indexOf("," + key + ",") != -1)
 		return;
-	String obj = "raw_" + key;
-#ifndef RAW_ENTITIES
-	// wylaczone - usun ewentualna wczesniejsza encje z HA
-	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/" + obj + "/config").c_str(), "", true);
-	rawAnnounced += key + ",";
-	return;
-#endif
 	String name = "Rejestr " + key;
 	name.toUpperCase();
 	name.replace("REJESTR", "Rejestr");

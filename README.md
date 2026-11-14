@@ -27,7 +27,7 @@ WiFi oraz dane serwera MQTT (np. dodatek Mosquitto w HA).
 | `tech_solar/energy_week`, `tech_solar/energy_month` | kWh (uzysk tygodniowy, miesięczny) |
 | `tech_solar/state` | stan sterownika (157C): praca ręczna / normalna / przegrzanie kolektora / kod |
 | `tech_solar/reg_1b9c` | rejestr 1B9C – prawdopodobnie uzysk roczny, do weryfikacji |
-| `tech_solar/raw/<rejestr>` | każdy rejestr surowo jako JSON `{"hex":"0062","u":98,"s":98}` (bez znaku / ze znakiem); w HA encja diagnostyczna „Rejestr XXXX” z historią (oprócz zegara 1620) |
+| `tech_solar/raw/<rejestr>` | (tylko z `RAW_ENTITIES`) każdy rejestr surowo jako JSON `{"hex":"0062","u":98,"s":98}` (bez znaku / ze znakiem); w HA encja diagnostyczna „Rejestr XXXX” z historią (oprócz zegara 1620) |
 | `tech_solar/diag` | JSON: RSSI, czas pracy, ramki, błędy |
 | `tech_solar/log`, `tech_solar/debug` | logi |
 
@@ -37,7 +37,7 @@ Na początku `ESP8266Zasobnik.ino`:
 
 - `#define SIMULATE` – bez sterownika: co 5 s sztuczna ramka z poprawnym CRC,
   zmieniające się temperatury (także ujemne) i pompa. Sprawdza całą drogę aż do HA.
-- `#define RAW_ENTITIES` (domyślnie włączone) – każdy surowy rejestr jako encja diagnostyczna „Rejestr XXXX” w HA z historią; po zakomentowaniu ESP usuwa te encje z HA.
+- `#define RAW_ENTITIES` (domyślnie włączone) – tryb rozpracowywania rejestrów: każdy surowy rejestr na `tech_solar/raw/<rejestr>` i jako encja diagnostyczna „Rejestr XXXX” w HA z historią. Po zakomentowaniu surowe rejestry nie są wysyłane, a ESP sprząta stare encje z HA i tematy raw z MQTT. Znane encje działają zawsze.
 - `#define DEBUG` – dodatkowe komunikaty na `tech_solar/debug`.
   Nie używa `Serial`, bo `Serial` jest podłączony do sterownika.
 
