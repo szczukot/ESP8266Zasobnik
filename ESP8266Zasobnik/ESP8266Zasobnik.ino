@@ -119,6 +119,7 @@ struct ModeVerify
 };
 ModeVerify modeVerify = { -1, 0, 0 };
 int countAutoClockSync = 0;
+String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
 int clockDriftState = -1; // -1 nieznany, 0 OK, 1 rozjechany (wysylane tylko przy zmianie)
 
 CreateHashMap(mypin, String, String, 255);
@@ -982,10 +983,24 @@ void PublishRaw(String key, String value)
 	if (!mqtt.connected())
 		return;
 
-	// surowy podglad do rozpracowywania rejestrow (bez encji w HA)
+	// surowy podglad do rozpracowywania rejestrow - kazdy rejestr ma encje
+	// diagnostyczna w HA, wiec w historii widac kiedy i jak sie zmienial
 	String topic = String(MQTT_BASE "/raw/") + key;
-	String payload = value + " = " + String(HexToLong(value)) + " / " + String((int16_t)HexToLong(value));
+	String payload = "{\"hex\":\"" + value + "\",\"u\":" + String(HexToLong(value)) +
+		",\"s\":" + String((int16_t)HexToLong(value)) + "}";
 	mqtt.publish(topic.c_str(), payload.c_str(), true);
+
+	// zegar pomijamy - zmienia sie co minute i tylko zasmiecalby historie
+	if (key == TechTime || rawAnnounced.indexOf("," + key + ",") != -1)
+		return;
+	String obj = "raw_" + key;
+	String name = "Rejestr " + key;
+	name.toUpperCase();
+	name.replace("REJESTR", "Rejestr");
+	String extra = String(",\"val_tpl\":\"{{ value_json.u }}\",\"json_attr_t\":\"" MQTT_BASE "/raw/") + key +
+		"\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:memory\"";
+	PublishDiscoveryEntity("sensor", obj.c_str(), name.c_str(), ("raw/" + key).c_str(), extra.c_str());
+	rawAnnounced += key + ",";
 }
 
 void PublishDiag()

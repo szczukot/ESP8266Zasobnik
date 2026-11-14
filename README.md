@@ -27,7 +27,7 @@ WiFi oraz dane serwera MQTT (np. dodatek Mosquitto w HA).
 | `tech_solar/energy_week`, `tech_solar/energy_month` | kWh (uzysk tygodniowy, miesięczny) |
 | `tech_solar/state` | stan sterownika (157C): praca ręczna / normalna / przegrzanie kolektora / kod |
 | `tech_solar/reg_1b9c` | rejestr 1B9C – prawdopodobnie uzysk roczny, do weryfikacji |
-| `tech_solar/raw/<rejestr>` | każdy rejestr surowo: `hex = bez znaku / ze znakiem` (bez encji w HA) |
+| `tech_solar/raw/<rejestr>` | każdy rejestr surowo jako JSON `{"hex":"0062","u":98,"s":98}` (bez znaku / ze znakiem); w HA encja diagnostyczna „Rejestr XXXX” z historią (oprócz zegara 1620) |
 | `tech_solar/diag` | JSON: RSSI, czas pracy, ramki, błędy |
 | `tech_solar/log`, `tech_solar/debug` | logi |
 
