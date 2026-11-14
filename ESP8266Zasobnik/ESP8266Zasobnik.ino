@@ -141,11 +141,51 @@ unsigned long lastRawSummary = 0;
 String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
 int clockDriftState = -1; // -1 nieznany, 0 OK, 1 rozjechany (wysylane tylko przy zmianie)
 
+// przyczyna ostatniego restartu (ustalana raz w setup)
+String resetReason;
+// wlasne restarty (ESP.restart) zapisujemy w pamieci RTC - przetrwa restart, ale nie odlaczenie zasilania
+#define RTC_RESTART_MAGIC 0x5A5A0000UL
+#define OWN_RESTART_NO_WIFI 1 // brak WiFi przez 20 s przy starcie
+#define OWN_RESTART_OTA 2     // wgrany nowy program przez Arduino IDE
+#define RTC_RESTART_SLOT 100 // blok 4-bajtowy; pierwsze 128 B pamieci uzytkownika RTC nadpisuje OTA (eboot)
+
+void MarkOwnRestart(uint8_t code)
+{
+	uint32_t v = RTC_RESTART_MAGIC | code;
+	ESP.rtcUserMemoryWrite(RTC_RESTART_SLOT, &v, sizeof(v));
+}
+
+String ReadResetReason()
+{
+	String r = ESP.getResetReason(); // Power On, Hardware Watchdog, Exception, Software Watchdog, Software/System restart, Deep-Sleep Wake, External System
+	rst_info* ri = ESP.getResetInfoPtr();
+	if (ri->reason == REASON_EXCEPTION_RST || ri->reason == REASON_SOFT_WDT_RST || ri->reason == REASON_WDT_RST)
+	{
+		char buf[80];
+		sprintf(buf, " (exccause=%u epc1=0x%08x excvaddr=0x%08x)", ri->exccause, ri->epc1, ri->excvaddr);
+		r += buf;
+	}
+
+	uint32_t v = 0;
+	ESP.rtcUserMemoryRead(RTC_RESTART_SLOT, &v, sizeof(v));
+	if (ri->reason == REASON_SOFT_RESTART && (v & 0xFFFF0000UL) == RTC_RESTART_MAGIC)
+	{
+		uint8_t code = v & 0xFF;
+		if (code == OWN_RESTART_NO_WIFI) r += " (brak WiFi przy starcie)";
+		else if (code == OWN_RESTART_OTA) r += " (OTA z Arduino IDE)";
+	}
+	v = 0;
+	ESP.rtcUserMemoryWrite(RTC_RESTART_SLOT, &v, sizeof(v)); // skasuj znacznik
+	return r;
+}
+
 CreateHashMap(mypin, String, String, 255);
 
 
 void setup(void)
 {
+	resetReason = ReadResetReason();
+
 	pinMode(ledGreen, OUTPUT);
 	pinMode(ledRed, OUTPUT);
 	pinMode(ledBlue, OUTPUT);
@@ -172,6 +212,7 @@ void setup(void)
 
 		if (millis() - timeout > 20000)
 		{
+			MarkOwnRestart(OWN_RESTART_NO_WIFI);
 			ESP.restart();
 			return;
 		}
@@ -193,6 +234,7 @@ void setup(void)
 	ArduinoOTA.setHostname("ESP8266Zasobnik");
 	ArduinoOTA.setPassword(SECRET_OTA_PASSWORD);
 	ArduinoOTA.onStart([]() { SendLog("OTA_start"); LEDOn(ledRed); LEDOn(ledBlue); });
+	ArduinoOTA.onEnd([]() { MarkOwnRestart(OWN_RESTART_OTA); });
 	ArduinoOTA.onError([](ota_error_t e) { SendLog("OTA_blad_" + String((int)e)); LEDOff(ledBlue); });
 	ArduinoOTA.begin();
 	httpUpdater.setup(&updateServer, "/update", "admin", SECRET_OTA_PASSWORD);
@@ -215,7 +257,7 @@ void setup(void)
 	// wszystko wystartowalo - wylacz czerwona diode
 	LEDOff(ledRed);
 
-	SendLog("Start");
+	SendLog("Start_" + resetReason);
 }
 
 
@@ -375,7 +417,10 @@ void HandleWWWClient()
 			s += "<br/>";
 			s += "Working time: " + SystemUptime();
 			s += "<br/>";
-			s += "Free memory: " + String(ESP.getFreeHeap());
+			s += "Free memory: " + String(ESP.getFreeHeap()) + "   najwiekszy blok: " + String(ESP.getMaxFreeBlockSize()) +
+				"   fragmentacja: " + String(ESP.getHeapFragmentation()) + " %";
+			s += "<br/>";
+			s += "Reset reason: " + resetReason;
 			s += "<br/>";
 			s += "Error client timeout: " + String(countErrorClientTimeout);
 			s += "<br/>";
@@ -1216,6 +1261,9 @@ void PublishDiag()
 	String j = "{\"rssi\":" + String(WiFi.RSSI()) +
 		",\"uptime\":" + String(millis() / 1000) +
 		",\"heap\":" + String(ESP.getFreeHeap()) +
+		",\"heap_max_block\":" + String(ESP.getMaxFreeBlockSize()) +
+		",\"heap_frag\":" + String(ESP.getHeapFragmentation()) +
+		",\"reset\":\"" + resetReason + "\"" +
 		",\"frames\":" + String(countReceivedFrame) +
 		",\"crc_errors\":" + String(countErrorCRC) +
 		",\"start_errors\":" + String(countErrorStart) + "}";
@@ -1290,6 +1338,12 @@ void PublishDiscovery()
 		",\"dev_cla\":\"signal_strength\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.rssi }}\"");
 	PublishDiscoveryEntity("sensor", "uptime", "Czas pracy", "diag",
 		",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.uptime }}\"");
+	PublishDiscoveryEntity("sensor", "reset_reason", "Przyczyna restartu", "diag",
+		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:restart-alert\",\"val_tpl\":\"{{ value_json.reset }}\"");
+	PublishDiscoveryEntity("sensor", "heap", "Wolna pamiec", "diag",
+		",\"unit_of_meas\":\"B\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:memory\",\"val_tpl\":\"{{ value_json.heap }}\"");
+	PublishDiscoveryEntity("sensor", "heap_max_block", "Najwiekszy wolny blok pamieci", "diag",
+		",\"unit_of_meas\":\"B\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:memory\",\"val_tpl\":\"{{ value_json.heap_max_block }}\"");
 	PublishDiscoveryEntity("sensor", "frames", "Odebrane ramki", "diag",
 		",\"stat_cla\":\"total_increasing\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.frames }}\"");
 	PublishDiscoveryEntity("sensor", "crc_errors", "Bledy CRC", "diag",
