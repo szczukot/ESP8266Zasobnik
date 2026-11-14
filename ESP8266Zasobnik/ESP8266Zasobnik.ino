@@ -138,6 +138,7 @@ int wrN = 0;
 unsigned long wrOverflow = 0;
 bool rawSummaryDirty = false;
 unsigned long lastRawSummary = 0;
+bool discoverySent = false; // autowykrywanie HA wysylane raz po starcie (komunikaty sa retained) i po restarcie HA
 String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
 int clockDriftState = -1; // -1 nieznany, 0 OK, 1 rozjechany (wysylane tylko przy zmianie)
 
@@ -199,7 +200,8 @@ void setup(void)
 
 	// tylko client (bez AP)	
 	WiFi.mode(WIFI_STA);
-	WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+	WiFi.setPhyMode(WIFI_PHY_MODE_11B); // 11b: najwolniejsze, ale najczulsze (ok. -98 dBm) - przy slabym zasiegu lepsze niz 11g
+	WiFi.setSleepMode(WIFI_NONE_SLEEP); // radio nie przysypia - mniej zerwan
   WiFi.setHostname("ESP8266Zasobnik");
 	WiFi.begin(ssid, password);
 
@@ -245,6 +247,8 @@ void setup(void)
 	mqtt.setServer(SECRET_MQTT_HOST, SECRET_MQTT_PORT);
 	mqtt.setBufferSize(1024); // konfiguracja autowykrywania HA nie miesci sie w domyslnych 256 B
 	mqtt.setCallback(MqttCallback);
+	mqtt.setKeepAlive(60);   // domyslne 15 s - przy gubieniu pakietow broker za szybko uznawal ESP za martwe
+	mqtt.setSocketTimeout(5); // nie blokuj petli 15 s przy zerwanym laczu
 
 	// czas z NTP (do ustawiania zegara sterownika), strefa Polska z czasem letnim
 	configTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
@@ -1054,6 +1058,12 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
 		QueueRaw(p);
 	else if (t == MQTT_BASE "/cmd/mode")
 		SetMode(ModeFromName(p));
+	else if (t == "homeassistant/status" && p == "online")
+	{
+		// HA wystartowal - wyslij autowykrywanie od nowa (takze encje surowych rejestrow)
+		discoverySent = false;
+		rawAnnounced = ",";
+	}
 }
 
 // --- MQTT / Home Assistant ---
@@ -1072,6 +1082,13 @@ void MqttLoop()
 	else
 	{
 		mqtt.loop();
+		if (!discoverySent) // po restarcie HA (wiadomosc homeassistant/status)
+		{
+			PublishDiscovery();
+			discoverySent = true;
+			mqtt.publish(MQTT_BASE "/status", "online", true);
+			rawSummaryDirty = true;
+		}
 		if (millis() - lastDiag > 60000)
 		{
 			lastDiag = millis();
@@ -1095,7 +1112,12 @@ void MqttConnect()
 	LEDOff(ledRed);
 	mqtt.publish(MQTT_BASE "/status", "online", true);
 	mqtt.subscribe(MQTT_BASE "/cmd/#");
-	PublishDiscovery();
+	mqtt.subscribe("homeassistant/status");
+	if (!discoverySent)
+	{
+		PublishDiscovery();
+		discoverySent = true;
+	}
 
 	// po (ponownym) polaczeniu wyslij wszystkie znane wartosci
 	const char* keys[] = { TechTempSolar, TechTempTank, TechMode, TechPumpOnOff, TechPumpPower, TechPower, TechPowerDaily,
