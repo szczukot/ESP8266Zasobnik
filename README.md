@@ -26,7 +26,7 @@ WiFi oraz dane serwera MQTT (np. dodatek Mosquitto w HA).
 | `tech_solar/energy_daily` | kWh (uzysk dzienny) |
 | `tech_solar/energy_week`, `tech_solar/energy_month` | kWh (uzysk tygodniowy, miesięczny) |
 | `tech_solar/state` | stan sterownika (157C): praca ręczna / normalna / przegrzanie kolektora / kod |
-| `tech_solar/raw/<rejestr>` | (tylko z `RAW_ENTITIES`) każdy rejestr surowo jako JSON `{"hex":"0062","u":98,"s":98,"zmiany":3}` (`zmiany` = ile razy zmienił wartość od startu ESP) (bez znaku / ze znakiem); w HA encja diagnostyczna „Rejestr XXXX” z historią (oprócz zegara 1620) |
+| `tech_solar/raw/<rejestr>` | (tylko z `RAW_ENTITIES`) każdy rejestr surowo jako JSON `{"hex":"0062","u":98,"s":98,"zmiany":3}` (`zmiany` = ile razy zmienił wartość od startu ESP) (bez znaku / ze znakiem); w HA encja diagnostyczna „Rejestr XXXX” z historią (oprócz zegara 1620 i rejestrów zapisu < 0x1388, które zawsze mają 0000; odczyt = zapis + 5000) |
 | `tech_solar/diag` | JSON: RSSI, czas pracy, ramki, błędy |
 | `tech_solar/raw_summary` | (tylko z `RAW_ENTITIES`) encja „Rejestry zmienne”: liczba rejestrów, które się zmieniły; atrybuty `lista_zmienne` i `lista_stale` |
 | `tech_solar/log`, `tech_solar/debug` | logi |
