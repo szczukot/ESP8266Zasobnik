@@ -603,8 +603,15 @@ String RawHTML()
 		else
 			cst += line + "<br/>";
 	}
+	// pokazujemy tylko rejestry zapisu, ktore mialy wartosc inna niz 0000 - reszta jako podsumowanie
+	int wrZero = 0;
 	for (int i = 0; i < wrN; i++)
 	{
+		if (wrVal[i] == 0 && wrCnt[i] == 0)
+		{
+			wrZero++;
+			continue;
+		}
 		String up = wrKey[i];
 		up.toUpperCase();
 		String r = ReadRegFor(wrKey[i]);
@@ -624,7 +631,8 @@ String RawHTML()
 		info += " - BRAK MIEJSCA (odczyt " + String(rawOverflow) + ", zapis " + String(wrOverflow) + ")";
 	return info + "<br/><b>Rejestry zmienne od startu ESP</b> (hex (bez znaku / ze znakiem)):<br/>" + var +
 		"<br/><b>Rejestry stale:</b><br/>" + cst +
-		"<br/><b>Rejestry zapisu</b> (odczyt = zapis + 5000, zwykle 0000):<br/>" + wr;
+		"<br/><b>Rejestry zapisu</b> (odczyt = zapis + 5000):<br/>" + wr +
+		String(wrZero) + " rejestrow zapisu zawsze 0000<br/>";
 }
 
 String ValuesHTML()
