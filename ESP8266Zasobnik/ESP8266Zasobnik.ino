@@ -45,9 +45,9 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechMode "1705" // 0 auto 1-odmrazanie 2-urlopowy
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
-#define FW_VERSION "2026.11.15-4" // podbijac przy kazdej zmianie
+#define FW_VERSION "2026.11.15-5" // podbijac przy kazdej zmianie
 #define TechTime "1620" // czas na sterowniku
-#define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
+#define TechDate "17b9" // data na sterowniku: d*2048 + m*128 + rok (format A: rok-2000, format B: rr+156) - patrz DecodeControllerDate
 #define TechPower "1b98" // uzysk chwilowy
 #define TechPowerDaily "1b99" // uzysk dzienny
 #define TechEnergyWeek "1b9a" // uzysk tygodniowy, kWh bez dzielnika
@@ -123,24 +123,24 @@ int countTx = 0;
 #define CLOCK_MAX_DIFF_MIN 2              // od jakiej roznicy (minuty) poprawiac zegar
 #define CLOCK_SYNC_MIN_INTERVAL 600000UL  // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
 unsigned long lastAutoClockSync = 0;
-bool autoDateEnabled = false; // tech_solar/cmd/auto_date on/off - domyslnie WYLACZONE: 17B9 nie zawsze pokazuje date z wyswietlacza
+bool autoDateEnabled = true; // tech_solar/cmd/auto_date on/off
 bool autoClockEnabled = true; // tech_solar/cmd/auto_clock on/off - wylaczenie na czas testow (do restartu ESP)
 
 // automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
 // odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
 #define DATE_WRITE_REG 0x0431
-// Zapis daty daje albo dobra date, albo date o 11 204 dni wczesniejsza (np. 15.11.2026 -> 14.03.1996); po zapisie
-// sterownik przez ok. 2,5 min nie wysyla zegara, potem 17B9 pokazuje faktyczna date. Kolejny zapis zwykle sie udaje.
-// Zapis godziny przy dacie ustawionej przez ESP tez cofa date o 11 204 dni - wtedy ta sama kontrola zapisze date ponownie.
-// Dlatego proby co 4 min, najwyzej 10 z rzedu (licznik zerowany po sukcesie). Testy 15.11.2026.
+// Zapis daty 0x0431 (testy 15.11.2026): sterownik po ok. 2,5 min PRZELICZA zapisana date W (rok = 2008 + pole):
+//   W do 31.12.2055 -> W - 11 204 dni (format A, max ok. 04.2025),
+//   W od 01.2056   -> W - 18 470/18 471 dni (format B, rok dwucyfrowy - tak dostaje sie lata 2005..2085).
+// Zeby ustawic dzis, zapisujemy dzis + dateWriteOffset dni (zapis 0x5345 = 10.06.2077 -> 15/11/26).
+// O tym, czy wychodzi 18 470 czy 18 471, decyduje godzina na zegarze sterownika (wieczorem 18 470, ok. polnocy 18 471),
+// wiec po zapisie sprawdzamy wynik i korygujemy przesuniecie o roznice w dniach. Zapis godziny tej daty nie psuje.
 #define DATE_SYNC_MIN_INTERVAL 240000UL
-#define DATE_SYNC_MAX_TRIES 10
+#define DATE_SYNC_MAX_TRIES 6
 int dateTries = 0;
-// Zapis daty 0x0431: ten sam uklad bitow co odczyt 17B9, ale ROK LICZONY OD 2008 (test 15.11.2026:
-// zapis 0x7D92 = 15.11.(2008+18) -> wyswietlacz 15/11/26; 0x7D99 -> 15/11/33; rok 2034+ daje smieciowa date).
-// Odczyt 17B9 ma rok od 2000 (gdy date ustawia sie recznie), a po zapisie z ESP 17B9 pokazuje zapisana wartosc.
 #define DATE_WRITE_YEAR_BASE 2008
 #define DATE_READ_YEAR_BASE 2000
+long dateWriteOffset = 18470; // dni dodawane do dzisiejszej daty przy zapisie (korygowane po kazdej probie)
 #define DATE_AUTO_SYNC
 unsigned long lastAutoDateSync = 0;
 int countAutoDateSync = 0;
@@ -999,22 +999,92 @@ String DateText(long v, int yearBase)
 	return String(buf);
 }
 
-// data do pokazania na WWW: 17B9 po zapisie z ESP ma rok od 2008, po ustawieniu recznym - od 2000
+// Numer dnia (od 01.01.1970) dla daty kalendarzowej - do liczenia roznicy dat
+long DayNumber(int y, int m, int d)
+{
+	y -= m <= 2;
+	long era = (y >= 0 ? y : y - 399) / 400;
+	long yoe = y - era * 400;
+	long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097 + doe - 719468;
+}
+
+// 17B9 ma dwa formaty (oba: dzien w bitach 15-11):
+//   A: d*2048 + m*128 + (rok-2000)  - data ustawiona z menu (7D9A = 15.11.2026)
+//   B: d*2048 + m*128 + rr + 156    - po zaniku zasilania i po zapisie 0x0431 (0962 = 01.01.70, 7E36 = 15.11.26, 727C = 14.03.96)
+// Gdy pasuja oba, wybieramy date blizsza dzisiejszej (NTP). Zwraca false, gdy zadna nie pasuje.
+bool DecodeControllerDate(long v, int &d, int &m, int &y)
+{
+	d = (v >> 11) & 0x1F;
+	long rest = v & 0x7FF;
+	bool okA = false, okB = false;
+	int mA = rest >> 7, yA = 2000 + (rest & 0x7F);
+	int mB = 0, yB = 0;
+	okA = (mA >= 1 && mA <= 12 && (rest & 0x7F) <= 99);
+	if (rest >= 156 + 128)
+	{
+		long t = rest - 156;
+		mB = t >> 7;
+		int rr = t & 0x7F;
+		yB = (rr >= 70 ? 1900 : 2000) + rr;
+		okB = (mB >= 1 && mB <= 12 && rr <= 99);
+	}
+	if (d < 1 || (!okA && !okB))
+		return false;
+	if (okA && okB)
+	{
+		time_t now = time(nullptr);
+		int ty = (now > 1600000000) ? localtime(&now)->tm_year + 1900 : 2026;
+		if (abs(yB - ty) < abs(yA - ty))
+			okA = false;
+	}
+	if (okA) { m = mA; y = yA; }
+	else { m = mB; y = yB; }
+	return true;
+}
+
+// data do pokazania na WWW
 String ControllerDateText(long v)
 {
-	time_t now = time(nullptr);
-	if (now > 1600000000 && v == DateValue(localtime(&now), DATE_WRITE_YEAR_BASE))
-		return DateText(v, DATE_WRITE_YEAR_BASE) + " (zapisana przez ESP)";
-	// lata sprzed 2000 (01.01.1970 po zaniku zasilania, smieciowe daty po zapisie): 17B9 = d*2048 + m*128 + (rok-2000) + 256,
-	// czyli pole roku 98..127 i pole miesiaca o 1 za duze (0962 = 01.01.1970, 727C = 14.03.1996, B2EB = 22.04.1979)
-	long y = v & 0x7F;
-	if (y >= 98)
-	{
-		char buf[16];
-		sprintf(buf, "%02ld.%02ld.%04ld", (v >> 11) & 0x1F, ((v >> 7) & 0x0F) - 1, 1872 + y);
-		return String(buf);
-	}
-	return DateText(v, DATE_READ_YEAR_BASE);
+	int d, m, y;
+	if (!DecodeControllerDate(v, d, m, y))
+		return "nieznana (" + String(v, HEX) + ")";
+	char buf[16];
+	sprintf(buf, "%02d.%02d.%04d", d, m, y);
+	return String(buf);
+}
+
+// data kalendarzowa z numeru dnia (odwrotnosc DayNumber)
+void CivilFromDays(long z, int &y, int &m, int &d)
+{
+	z += 719468;
+	long era = (z >= 0 ? z : z - 146096) / 146097;
+	long doe = z - era * 146097;
+	long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+	long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	long mp = (5 * doy + 2) / 153;
+	d = doy - (153 * mp + 2) / 5 + 1;
+	m = mp < 10 ? mp + 3 : mp - 9;
+	y = yoe + era * 400 + (m <= 2);
+}
+
+// wartosc do zapisu 0x0431: dzis + dateWriteOffset dni, rok od 2008 (bez time_t - rok 2077 nie miesci sie w 32 bitach)
+uint16_t DateWriteValue(struct tm* t)
+{
+	int y, m, d;
+	CivilFromDays(DayNumber(t->tm_year + 1900, t->tm_mon + 1, t->tm_mday) + dateWriteOffset, y, m, d);
+	return (uint16_t)((d << 11) | (m << 7) | ((y - DATE_WRITE_YEAR_BASE) & 0x7F));
+}
+
+// roznica w dniach: data sterownika - dzisiejsza data (NTP); false gdy nie da sie ustalic
+bool ControllerDateDiff(long v, struct tm* t, long &diff)
+{
+	int d, m, y;
+	if (!DecodeControllerDate(v, d, m, y))
+		return false;
+	diff = DayNumber(y, m, d) - DayNumber(t->tm_year + 1900, t->tm_mon + 1, t->tm_mday);
+	return true;
 }
 
 // Porownuje date sterownika (17B9) z data z NTP i w razie roznicy ustawia ja automatycznie.
@@ -1031,9 +1101,9 @@ void CheckControllerDate()
 		return;
 
 	long ctrl = HexToLong(mypin[TechDate]);
-	uint16_t want = DateValue(t, DATE_READ_YEAR_BASE);
-	// po zapisie z ESP 17B9 pokazuje wartosc zapisana (rok od 2008) - to tez jest poprawna data
-	if (ctrl == want || ctrl == DateValue(t, DATE_WRITE_YEAR_BASE))
+	long diff = 99999;
+	bool known = ControllerDateDiff(ctrl, t, diff);
+	if (known && diff == 0)
 	{
 		if (dateTries > 0)
 			SendLog("Data_OK_po_" + String(dateTries) + "_probach");
@@ -1045,11 +1115,14 @@ void CheckControllerDate()
 	if (dateTries >= DATE_SYNC_MAX_TRIES)
 		return; // za duzo prob z rzedu - nie probujemy do restartu ESP
 
+	// poprzednia proba (tylko gdy chybila o kilka dni - nie np. po zaniku zasilania) -> korekta przesuniecia
+	if (dateTries > 0 && known && diff >= -3 && diff <= 3)
+		dateWriteOffset -= diff;
 	dateTries++;
 
 	lastAutoDateSync = millis();
 	countAutoDateSync++;
-	SendLog("Data_auto_" + DateText(ctrl, DATE_READ_YEAR_BASE) + "_na_" + DateText(want, DATE_READ_YEAR_BASE));
+	SendLog("Data_auto_" + ControllerDateText(ctrl) + "_przesuniecie_" + String(dateWriteOffset));
 	QueueDateSync();
 }
 
@@ -1162,7 +1235,7 @@ void TxLoop()
 				vals[k] = (uint16_t)((t->tm_hour << 8) | t->tm_min);
 			}
 			else if (multiKind[k] == 2)
-				vals[k] = (uint16_t)((t->tm_mday << 11) | ((t->tm_mon + 1) << 7) | ((t->tm_year + 1900 - 2008) & 0x7F));
+				vals[k] = DateWriteValue(t);
 			else
 				vals[k] = multiVal[k];
 		}
@@ -1196,7 +1269,7 @@ void TxLoop()
 	if (txCmd.isDate)
 	{
 		time_t now = time(nullptr);
-		txCmd.val = DateValue(localtime(&now), DATE_WRITE_YEAR_BASE);
+		txCmd.val = DateWriteValue(localtime(&now));
 	}
 
 	txCmd.pending = false;
@@ -1512,7 +1585,8 @@ void CheckDateDrift()
 	if ((t->tm_hour == 23 && t->tm_min >= 50) || (t->tm_hour == 0 && t->tm_min < 15))
 		return; // okolice polnocy - sterownik zmienia date wg swojego zegara
 	long v = HexToLong(mypin[TechDate]);
-	bool ok = (v == DateValue(t, DATE_READ_YEAR_BASE) || v == DateValue(t, DATE_WRITE_YEAR_BASE));
+	long diff;
+	bool ok = ControllerDateDiff(v, t, diff) && diff == 0;
 	int drift = 0;
 	if (ok)
 		dateMismatchSince = 0;
