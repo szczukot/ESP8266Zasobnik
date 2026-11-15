@@ -146,4 +146,10 @@ Dzień 15, miesiąc 11, zmieniane tylko pole roku (bity 6–0). Odczyt z wyświe
 | 7DF9 | 121 | 22/04/79 | poza zakresem |
 | 0001 | 1 (dzień 0, mies. 0) | bez zmian | odrzucone |
 
-Wniosek: zapis przyjmuje lata **2009–2033** (pole 1–25, rok = 2008 + pole). Poza zakresem data cofa się o stałe 11 204 dni (30 lat 8 miesięcy). Odczyt 17B9 po ręcznym ustawieniu daty ma rok od 2000, po zapisie z ESP — zapisaną wartość (rok od 2008).
+Wniosek (poprawiony po dalszych testach): część „śmieciowych” dat **nie pochodziła z zapisu daty, tylko z późniejszego zapisu godziny** (0x0298), który ESP robił automatycznie albo przyciskiem z HA.
+
+- Zapis godziny przy dacie ustawionej **ręcznie** (17B9 = 0x7D9A, rok od 2000) — data zostaje (15.11.2026, test 11:06).
+- Zapis godziny przy dacie ustawionej **przez ESP** (17B9 = 0x7D92, rok od 2008) — data cofa się o ok. 11 204 dni (15.11.2026 → 13.03.1996, testy 11:00 i 11:03).
+- Sterownik przy zapisie godziny najpewniej odbudowuje datę z 17B9 (z rokiem od 2000), więc wartość zapisana przez ESP daje złą datę.
+- Zapis daty: rok = 2008 + pole (pewnie sprawdzone dla 2009, 2026, 2033). Wyniki dla 2008 i 2034 mogły być zepsute zapisem godziny — do ponownego sprawdzenia.
+- Do sprawdzenia: czy o północy sterownik sam przepisuje 17B9 do postaci z rokiem od 2000 (test 15→16.11.2026).
