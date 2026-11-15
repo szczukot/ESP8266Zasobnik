@@ -27,7 +27,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1705 | ✅ | tryb pracy | 0 auto, 1 odmrażanie, 2 urlopowy |
 | 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora; wg słownika dzien.net (jako 01F4): 0xD4–0xD7 uszkodzony czujnik solara 1–4 |
 | 1620 | ✅ | zegar sterownika | starszy bajt = godzina, młodszy = minuta (0x083A = 08:58); zapis przez 0x0298 |
-| 17B9 | 🟡 | data (kopia?) | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok − 2000 (0x7D9A = 15.11.2026, 0x759A = 14.11, 0x6D9A = 13.11); zmienia się o północy sterownika; po zaniku zasilania data śmieciowa (np. 0x0962 = 01.02.2098); zapis przez 0x0431 zmienia 17B9, ale **nie zmienia daty na wyświetlaczu** (15.11.2026: po zapisie 0x7D9A wyświetlacz 13/03/04) — 17B9 to chyba kopia daty; właściwy zapis daty nieznany |
+| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok; **odczyt: rok − 2000** (0x7D9A = 15.11.2026 po ręcznym ustawieniu); zmienia się o północy; po zaniku zasilania śmieć (np. 0x0962). **Zapis przez 0x0431: rok − 2008** (0x7D92 → wyświetlacz 15/11/26; 0x7D99 → 15/11/33; rok ≥ 2034 → śmieciowa data, np. 0x7D9A → 13/03/04; 0x0001 odrzucone). Po zapisie 17B9 pokazuje zapisaną wartość |
 | 15A7 | ✅ | typ sterownika | 0x20 = **ST-402** (słownik dzien.net) |
 | 16FF | 🟡 | typ/model sterownika (drugi rejestr) | 0x22; w słowniku dzien.net opisany ze znakami zapytania, kodu 0x22 tam nie ma |
 
