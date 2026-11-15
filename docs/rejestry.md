@@ -27,7 +27,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1705 | ✅ | tryb pracy | 0 auto, 1 odmrażanie, 2 urlopowy |
 | 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora; wg słownika dzien.net (jako 01F4): 0xD4–0xD7 uszkodzony czujnik solara 1–4 |
 | 1620 | ✅ | zegar sterownika | starszy bajt = godzina, młodszy = minuta (0x083A = 08:58); zapis przez 0x0298 |
-| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok − 2000 (0x7D9A = 15.11.2026, 0x759A = 14.11, 0x6D9A = 13.11); zmienia się o północy sterownika; po zaniku zasilania data śmieciowa; zapis prawdopodobnie przez 0x0431 (niesprawdzony) |
+| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok; **odczyt: rok − 2000** (0x7D9A = 15.11.2026 po ręcznym ustawieniu); zmienia się o północy; po zaniku zasilania śmieć (np. 0x0962). **Zapis przez 0x0431: rok − 2008** (0x7D92 → wyświetlacz 15/11/26; 0x7D99 → 15/11/33; rok ≥ 2034 → śmieciowa data, np. 0x7D9A → 13/03/04; 0x0001 odrzucone). Po zapisie 17B9 przez chwilę pokazuje poprzednią datę, potem zapisaną wartość |
 | 15A7 | ✅ | typ sterownika | 0x20 = **ST-402** (słownik dzien.net) |
 | 16FF | 🟡 | typ/model sterownika (drugi rejestr) | 0x22; w słowniku dzien.net opisany ze znakami zapytania, kodu 0x22 tam nie ma |
 
@@ -50,6 +50,19 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1B8B | ✅ | stężenie glikolu | 50 % |
 | 1B8C | ✅ | kalibracja | 0 |
 
+## Nastawy — zbiornik (menu serwisowe)
+
+| Rejestr | Pewność | Znaczenie | Wartość u nas |
+|---|---|---|---|
+| 1B5A | ✅ | temperatura zadana zbiornika | 75 °C |
+| 1B5B | ✅ | temperatura maksymalna zbiornika 1 | 80 °C |
+| 1B5C | ✅ | histereza zbiornika | 3 °C |
+| 1B5D | ✅ | temperatura minimalna zbiornika 1 | 10 °C |
+| 1B5E | ✅ | wychładzanie do zadanej | 1 = włączone |
+| 1B5F | ✅ | delta urlop | 35 °C |
+
+Wartości spisane z menu serwisowego 15.11.2026 i zgodne z kolejnymi rejestrami (75, 80, 3, 10, 1, 35) — dopasowanie po wartościach, bez zmiany nastawy.
+
 ## Nastawy — inne
 
 | Rejestr | Pewność | Znaczenie | Wartość u nas |
@@ -57,7 +70,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1C06 | 🟡 | kod serwisowy | 112 = „0112” (fabryczny wg instrukcji) |
 | 1B6A | 🟡 | temperatura antyzamarzania kolektora | −10 °C (zakres −50…+10) |
 | 1B66 | ✅ | maksymalna temperatura pracy kolektorów | 133 °C (słownik dzien.net) |
-| 1B5A…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
+| 1B60…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
 
 ## Dzienniki zdarzeń (menu Statystyki)
 
@@ -117,3 +130,45 @@ Nastawy menu użytkownika **podświetlenie** i **kontrast** też nie są wysyła
 
 - Instrukcja ST-402N PWM: https://sterownikitech.pl/img/products_files/st-402N-PWM.pdf
 - Tech_RS-mqtt-gateway (sterowniki kotłowe TECH, m.in. 1620, 1621, 157C, 15A7, 16FF): https://github.com/agirilovich/Tech_RS-mqtt-gateway
+
+## Testy zapisu daty 0x0431 (15.11.2026)
+
+Dzień 15, miesiąc 11, zmieniane tylko pole roku (bity 6–0). Odczyt z wyświetlacza sterownika (d/m/r).
+
+| Zapis | Pole roku | Wyświetlacz | Uwagi |
+|---|---|---|---|
+| 7D80 | 0 | 14/03/78 | poza zakresem; 2008-11-15 − 11 204 dni |
+| 7D81 | 1 | 15/11/09 | ✅ 2009 — dolna granica |
+| 7D92 | 18 | 15/11/26 | ✅ 2026 |
+| 7D99 | 25 | 15/11/33 | ✅ 2033 — górna granica |
+| 7D9A | 26 | 13/03/04 | poza zakresem; 2034-11-15 − 11 204 dni |
+| 759A | 26 (dzień 14) | 12/03/04 | jw. |
+| 7DF9 | 121 | 22/04/79 | poza zakresem |
+| 0001 | 1 (dzień 0, mies. 0) | bez zmian | odrzucone |
+
+Wniosek (poprawiony po dalszych testach): część „śmieciowych” dat **nie pochodziła z zapisu daty, tylko z późniejszego zapisu godziny** (0x0298), który ESP robił automatycznie albo przyciskiem z HA.
+
+- Zapis godziny przy dacie ustawionej **ręcznie** (17B9 = 0x7D9A, rok od 2000) — data zostaje (15.11.2026, test 11:06).
+- Zapis godziny przy dacie ustawionej **przez ESP** (17B9 = 0x7D92, rok od 2008) — data cofa się o ok. 11 204 dni (15.11.2026 → 13.03.1996, testy 11:00 i 11:03).
+- Sterownik przy zapisie godziny najpewniej odbudowuje datę z 17B9 (z rokiem od 2000), więc wartość zapisana przez ESP daje złą datę.
+- Zapis daty: rok = 2008 + pole (pewnie sprawdzone dla 2009, 2026, 2033). Wyniki dla 2008 i 2034 mogły być zepsute zapisem godziny — do ponownego sprawdzenia.
+- Do sprawdzenia: czy o północy sterownik sam przepisuje 17B9 do postaci z rokiem od 2000 (test 15→16.11.2026).
+
+## Odczyt 17B9 przy ręcznym ustawianiu daty (15.11.2026)
+
+| Data ustawiona w menu | 17B9 |
+|---|---|
+| 15.11.2026 | 7D9A |
+| 16.11.2026 | 859A |
+| 15.12.2026 | 7E1A |
+| 15.11.2027 | 7D9B |
+| 01.01.2009 | 0889 |
+| 31.12.2033 | FE21 |
+| 01.01.2000 (rok „00”) | 0880 |
+| 31.12.2099 (rok „99”) | FE63 |
+| 01.01.1970 (po zaniku zasilania, bez ustawiania) | 0962 |
+
+- Menu: rok dwucyfrowy 00–99 = 2000–2099, przewija się w kółko; po zaniku zasilania data domyślna 01.01.1970 (wybór roku czterocyfrowy).
+- 17B9 = dzień·2048 + miesiąc·128 + (rok − 2000); dla lat sprzed 2000 (rok ujemny) wychodzi dodatkowo +0x100 (0962 = 01.01.1970, 727C = 14.03.1996, B2EB = 22.04.1979).
+- Zmiana daty w menu nie zmienia żadnego innego rejestru. Po ustawieniu daty sterownik przez ok. 1–2 min nie wysyła 1620 (zegara).
+- Zapis daty przez 0x0431 działa inaczej niż menu (rok 2026 trzeba wysłać jako 18) i ma skutki uboczne (patrz wyżej) — **nie używać** do czasu wyjaśnienia.
