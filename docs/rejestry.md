@@ -27,7 +27,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1705 | ✅ | tryb pracy | 0 auto, 1 odmrażanie, 2 urlopowy |
 | 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora; wg słownika dzien.net (jako 01F4): 0xD4–0xD7 uszkodzony czujnik solara 1–4 |
 | 1620 | ✅ | zegar sterownika | starszy bajt = godzina, młodszy = minuta (0x083A = 08:58); zapis przez 0x0298 |
-| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok; **odczyt: rok − 2000** (0x7D9A = 15.11.2026 po ręcznym ustawieniu); zmienia się o północy; po zaniku zasilania śmieć (np. 0x0962). **Zapis przez 0x0431: rok − 2008** (0x7D92 → wyświetlacz 15/11/26; 0x7D99 → 15/11/33; rok ≥ 2034 → śmieciowa data, np. 0x7D9A → 13/03/04; 0x0001 odrzucone). Po zapisie 17B9 pokazuje zapisaną wartość |
+| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok; **odczyt: rok − 2000** (0x7D9A = 15.11.2026 po ręcznym ustawieniu); zmienia się o północy; po zaniku zasilania śmieć (np. 0x0962). **Zapis przez 0x0431: rok − 2008** (0x7D92 → wyświetlacz 15/11/26; 0x7D99 → 15/11/33; rok ≥ 2034 → śmieciowa data, np. 0x7D9A → 13/03/04; 0x0001 odrzucone). Po zapisie 17B9 przez chwilę pokazuje poprzednią datę, potem zapisaną wartość |
 | 15A7 | ✅ | typ sterownika | 0x20 = **ST-402** (słownik dzien.net) |
 | 16FF | 🟡 | typ/model sterownika (drugi rejestr) | 0x22; w słowniku dzien.net opisany ze znakami zapytania, kodu 0x22 tam nie ma |
 
@@ -130,3 +130,20 @@ Nastawy menu użytkownika **podświetlenie** i **kontrast** też nie są wysyła
 
 - Instrukcja ST-402N PWM: https://sterownikitech.pl/img/products_files/st-402N-PWM.pdf
 - Tech_RS-mqtt-gateway (sterowniki kotłowe TECH, m.in. 1620, 1621, 157C, 15A7, 16FF): https://github.com/agirilovich/Tech_RS-mqtt-gateway
+
+## Testy zapisu daty 0x0431 (15.11.2026)
+
+Dzień 15, miesiąc 11, zmieniane tylko pole roku (bity 6–0). Odczyt z wyświetlacza sterownika (d/m/r).
+
+| Zapis | Pole roku | Wyświetlacz | Uwagi |
+|---|---|---|---|
+| 7D80 | 0 | 14/03/78 | poza zakresem; 2008-11-15 − 11 204 dni |
+| 7D81 | 1 | 15/11/09 | ✅ 2009 — dolna granica |
+| 7D92 | 18 | 15/11/26 | ✅ 2026 |
+| 7D99 | 25 | 15/11/33 | ✅ 2033 — górna granica |
+| 7D9A | 26 | 13/03/04 | poza zakresem; 2034-11-15 − 11 204 dni |
+| 759A | 26 (dzień 14) | 12/03/04 | jw. |
+| 7DF9 | 121 | 22/04/79 | poza zakresem |
+| 0001 | 1 (dzień 0, mies. 0) | bez zmian | odrzucone |
+
+Wniosek: zapis przyjmuje lata **2009–2033** (pole 1–25, rok = 2008 + pole). Poza zakresem data cofa się o stałe 11 204 dni (30 lat 8 miesięcy). Odczyt 17B9 po ręcznym ustawieniu daty ma rok od 2000, po zapisie z ESP — zapisaną wartość (rok od 2008).
