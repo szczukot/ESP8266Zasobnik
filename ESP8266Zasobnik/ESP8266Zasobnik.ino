@@ -131,9 +131,9 @@ bool autoClockEnabled = true; // tech_solar/cmd/auto_clock on/off - wylaczenie n
 // Zapis daty daje albo dobra date, albo date o 11 204 dni wczesniejsza (np. 15.11.2026 -> 14.03.1996); po zapisie
 // sterownik przez ok. 2,5 min nie wysyla zegara, potem 17B9 pokazuje faktyczna date. Kolejny zapis zwykle sie udaje.
 // Zapis godziny przy dacie ustawionej przez ESP tez cofa date o 11 204 dni - wtedy ta sama kontrola zapisze date ponownie.
-// Dlatego proby co 4 min, najwyzej 5 z rzedu (licznik zerowany po sukcesie). Testy 15.11.2026.
+// Dlatego proby co 4 min, najwyzej 10 z rzedu (licznik zerowany po sukcesie). Testy 15.11.2026.
 #define DATE_SYNC_MIN_INTERVAL 240000UL
-#define DATE_SYNC_MAX_TRIES 5
+#define DATE_SYNC_MAX_TRIES 10
 int dateTries = 0;
 // Zapis daty 0x0431: ten sam uklad bitow co odczyt 17B9, ale ROK LICZONY OD 2008 (test 15.11.2026:
 // zapis 0x7D92 = 15.11.(2008+18) -> wyswietlacz 15/11/26; 0x7D99 -> 15/11/33; rok 2034+ daje smieciowa date).
