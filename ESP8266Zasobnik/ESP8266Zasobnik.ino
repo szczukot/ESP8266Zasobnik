@@ -45,6 +45,7 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechMode "1705" // 0 auto 1-odmrazanie 2-urlopowy
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
+#define FW_VERSION "2026.11.15-1" // podbijac przy kazdej zmianie
 #define TechTime "1620" // czas na sterowniku
 #define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
 #define TechPower "1b98" // uzysk chwilowy
@@ -127,10 +128,19 @@ bool autoClockEnabled = true; // tech_solar/cmd/auto_clock on/off - wylaczenie n
 // automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
 // odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
 #define DATE_WRITE_REG 0x0431
-#define DATE_SYNC_MIN_INTERVAL 600000UL // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
-// WYLACZONE: zapis 0x0431 zmienia 17B9, ale NIE date na wyswietlaczu (test 15.11.2026: wyswietlacz 13/03/04,
-// 17B9 = 15.11.2026) - 17B9 to chyba kopia daty, a nie zegar sterownika. Odkomentuj po znalezieniu wlasciwego zapisu.
-//#define DATE_AUTO_SYNC
+// Zapis daty daje albo dobra date, albo date o 11 204 dni wczesniejsza (np. 15.11.2026 -> 14.03.1996); po zapisie
+// sterownik przez ok. 2,5 min nie wysyla zegara, potem 17B9 pokazuje faktyczna date. Kolejny zapis zwykle sie udaje.
+// Zapis godziny przy dacie ustawionej przez ESP tez cofa date o 11 204 dni - wtedy ta sama kontrola zapisze date ponownie.
+// Dlatego proby co 4 min, najwyzej 10 z rzedu (licznik zerowany po sukcesie). Testy 15.11.2026.
+#define DATE_SYNC_MIN_INTERVAL 240000UL
+#define DATE_SYNC_MAX_TRIES 10
+int dateTries = 0;
+// Zapis daty 0x0431: ten sam uklad bitow co odczyt 17B9, ale ROK LICZONY OD 2008 (test 15.11.2026:
+// zapis 0x7D92 = 15.11.(2008+18) -> wyswietlacz 15/11/26; 0x7D99 -> 15/11/33; rok 2034+ daje smieciowa date).
+// Odczyt 17B9 ma rok od 2000 (gdy date ustawia sie recznie), a po zapisie z ESP 17B9 pokazuje zapisana wartosc.
+#define DATE_WRITE_YEAR_BASE 2008
+#define DATE_READ_YEAR_BASE 2000
+#define DATE_AUTO_SYNC
 unsigned long lastAutoDateSync = 0;
 int countAutoDateSync = 0;
 
@@ -441,6 +451,8 @@ void HandleWWWClient()
       s += "<br/>";
 			s += "Connect quality: " + String(dBmtoPercentage(rssi)) + " %";
 			s += "<br/>";
+			s += "Wersja: " FW_VERSION " (kompilacja " __DATE__ " " __TIME__ ")";
+			s += "<br/>";
 			s += "Working time: " + SystemUptime();
 			s += "<br/>";
 			s += "Free memory: " + String(ESP.getFreeHeap()) + "   najwiekszy blok: " + String(ESP.getMaxFreeBlockSize()) +
@@ -739,7 +751,7 @@ String ValuesHTML()
 		}
 		s += "<br/>";
 	}
-	if (mypin.indexOf(TechDate) != -1) s += "Data sterownika: " + DateText(HexToLong(mypin[TechDate])) + "<br/>";
+	if (mypin.indexOf(TechDate) != -1) s += "Data sterownika: " + ControllerDateText(HexToLong(mypin[TechDate])) + "<br/>";
 	if (mypin.indexOf(TechState) != -1) s += "Stan: " + StateName(HexToLong(mypin[TechState])) + " (" + mypin[TechState] + ")<br/>";
 	return s;
 }
@@ -971,16 +983,25 @@ void CheckControllerClock(const String& value)
 #endif
 }
 
-uint16_t DateValue(struct tm* t)
+uint16_t DateValue(struct tm* t, int yearBase)
 {
-	return (uint16_t)((t->tm_mday << 11) | ((t->tm_mon + 1) << 7) | ((t->tm_year + 1900 - 2000) & 0x7F));
+	return (uint16_t)((t->tm_mday << 11) | ((t->tm_mon + 1) << 7) | ((t->tm_year + 1900 - yearBase) & 0x7F));
 }
 
-String DateText(long v)
+String DateText(long v, int yearBase)
 {
 	char buf[16];
-	sprintf(buf, "%02ld.%02ld.%04ld", (v >> 11) & 0x1F, (v >> 7) & 0x0F, 2000 + (v & 0x7F));
+	sprintf(buf, "%02ld.%02ld.%04ld", (v >> 11) & 0x1F, (v >> 7) & 0x0F, yearBase + (v & 0x7F));
 	return String(buf);
+}
+
+// data do pokazania na WWW: 17B9 po zapisie z ESP ma rok od 2008, po ustawieniu recznym - od 2000
+String ControllerDateText(long v)
+{
+	time_t now = time(nullptr);
+	if (now > 1600000000 && v == DateValue(localtime(&now), DATE_WRITE_YEAR_BASE))
+		return DateText(v, DATE_WRITE_YEAR_BASE) + " (zapisana przez ESP)";
+	return DateText(v, DATE_READ_YEAR_BASE);
 }
 
 // Porownuje date sterownika (17B9) z data z NTP i w razie roznicy ustawia ja automatycznie.
@@ -997,17 +1018,25 @@ void CheckControllerDate()
 		return;
 
 	long ctrl = HexToLong(mypin[TechDate]);
-	uint16_t want = DateValue(t);
-	if (ctrl == want)
+	uint16_t want = DateValue(t, DATE_READ_YEAR_BASE);
+	// po zapisie z ESP 17B9 pokazuje wartosc zapisana (rok od 2008) - to tez jest poprawna data
+	if (ctrl == want || ctrl == DateValue(t, DATE_WRITE_YEAR_BASE))
+	{
+		if (dateTries > 0)
+			SendLog("Data_OK_po_" + String(dateTries) + "_probach");
+		dateTries = 0;
 		return;
+	}
 	if (lastAutoDateSync != 0 && millis() - lastAutoDateSync < DATE_SYNC_MIN_INTERVAL)
 		return;
-	if (countAutoDateSync >= 3)
-		return; // 3 proby bez skutku - rejestr zapisu daty chyba inny; nie probujemy do restartu ESP
+	if (dateTries >= DATE_SYNC_MAX_TRIES)
+		return; // za duzo prob z rzedu - nie probujemy do restartu ESP
+
+	dateTries++;
 
 	lastAutoDateSync = millis();
 	countAutoDateSync++;
-	SendLog("Data_auto_" + DateText(ctrl) + "_na_" + DateText(want));
+	SendLog("Data_auto_" + DateText(ctrl, DATE_READ_YEAR_BASE) + "_na_" + DateText(want, DATE_READ_YEAR_BASE));
 	QueueDateSync();
 }
 
@@ -1154,7 +1183,7 @@ void TxLoop()
 	if (txCmd.isDate)
 	{
 		time_t now = time(nullptr);
-		txCmd.val = DateValue(localtime(&now));
+		txCmd.val = DateValue(localtime(&now), DATE_WRITE_YEAR_BASE);
 	}
 
 	txCmd.pending = false;
@@ -1459,6 +1488,7 @@ void PublishDiag()
 
 	String j = "{\"rssi\":" + String(WiFi.RSSI()) +
 		",\"uptime\":" + String(millis() / 1000) +
+		",\"ver\":\"" FW_VERSION "\"" +
 		",\"heap\":" + String(ESP.getFreeHeap()) +
 		",\"heap_max_block\":" + String(ESP.getMaxFreeBlockSize()) +
 		",\"heap_frag\":" + String(ESP.getHeapFragmentation()) +
@@ -1479,7 +1509,7 @@ void PublishDiscoveryEntity(const char* component, const char* obj, const char* 
 		p += String(",\"stat_t\":\"" MQTT_BASE "/") + stateTopic + "\"";
 	p += ",\"avty_t\":\"" MQTT_BASE "/status\"";
 	p += extra;
-	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-402N PWM\",\"sw\":\"ESP8266Zasobnik\"}";
+	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-402N PWM\",\"sw\":\"ESP8266Zasobnik " FW_VERSION "\"}";
 	p += "}";
 
 	mqtt.publish(topic.c_str(), p.c_str(), true);
@@ -1537,6 +1567,8 @@ void PublishDiscovery()
 		",\"dev_cla\":\"signal_strength\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.rssi }}\"");
 	PublishDiscoveryEntity("sensor", "uptime", "Czas pracy", "diag",
 		",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.uptime }}\"");
+	PublishDiscoveryEntity("sensor", "version", "Wersja programu", "diag",
+		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:tag\",\"val_tpl\":\"{{ value_json.ver }}\"");
 	PublishDiscoveryEntity("sensor", "reset_reason", "Przyczyna restartu", "diag",
 		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:restart-alert\",\"val_tpl\":\"{{ value_json.reset }}\"");
 	PublishDiscoveryEntity("sensor", "heap", "Wolna pamiec", "diag",
