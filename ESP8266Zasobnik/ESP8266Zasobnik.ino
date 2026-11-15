@@ -118,6 +118,9 @@ unsigned long lastAutoClockSync = 0;
 // odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
 #define DATE_WRITE_REG 0x0431
 #define DATE_SYNC_MIN_INTERVAL 600000UL // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
+// WYLACZONE: zapis 0x0431 zmienia 17B9, ale NIE date na wyswietlaczu (test 15.11.2026: wyswietlacz 13/03/04,
+// 17B9 = 15.11.2026) - 17B9 to chyba kopia daty, a nie zegar sterownika. Odkomentuj po znalezieniu wlasciwego zapisu.
+//#define DATE_AUTO_SYNC
 unsigned long lastAutoDateSync = 0;
 int countAutoDateSync = 0;
 
@@ -920,8 +923,10 @@ void CheckControllerClock(const String& value)
 	}
 
 	// zegar w porzadku - sprawdz date (zegar przychodzi co minute, wiec data sprawdzana tez co minute)
+#ifdef DATE_AUTO_SYNC
 	if (!drift)
 		CheckControllerDate();
+#endif
 }
 
 uint16_t DateValue(struct tm* t)
