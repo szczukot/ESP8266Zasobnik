@@ -105,6 +105,15 @@ struct TxCommand
 	bool isDate;       // data: wartosc liczona w chwili wysylki
 };
 TxCommand txCmd = { false, 0, 0, 0, 0, 0, false, false };
+// ramka z kilkoma parami rejestr-wartosc (test: zegar i data w jednej ramce), temat tech_solar/cmd/raw_multi
+// wartosc "time" = biezaca godzina (HHMM), "date" = biezaca data w formacie zapisu (rok od 2008)
+#define MULTI_MAX 4
+uint16_t multiReg[MULTI_MAX];
+uint16_t multiVal[MULTI_MAX];
+uint8_t multiKind[MULTI_MAX]; // 0 = wartosc stala, 1 = time, 2 = date
+int multiN = 0;
+bool multiPending = false;
+unsigned long multiSince = 0;
 time_t clockRecvTime = 0; // kiedy (wg NTP) przyszla ostatnia wartosc 1620
 String lastTx = "-";
 int countTx = 0;
@@ -849,6 +858,38 @@ void QueueTx(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 }
 
 // "RRRRVVVV" albo "RRRR VVVV [ADRES] [ODSTEP_MS]", wszystko hex poza odstepem
+// "0298 time 0431 date" albo "0298 0b0c 0431 7d92" - do 4 par rejestr-wartosc w jednej ramce
+void QueueMulti(String p)
+{
+	p.trim();
+	p.toLowerCase();
+	String tok[2 * MULTI_MAX];
+	int n = 0, start = 0;
+	while (n < 2 * MULTI_MAX && start < (int)p.length())
+	{
+		int sp = p.indexOf(' ', start);
+		if (sp == -1) sp = p.length();
+		if (sp > start) tok[n++] = p.substring(start, sp);
+		start = sp + 1;
+	}
+	if (n < 2 || n % 2 != 0)
+	{
+		SendLog("TX_multi_zly_format_" + p);
+		return;
+	}
+	multiN = n / 2;
+	for (int k = 0; k < multiN; k++)
+	{
+		multiReg[k] = strtol(tok[2 * k].c_str(), NULL, 16);
+		String v = tok[2 * k + 1];
+		multiKind[k] = (v == "time") ? 1 : (v == "date") ? 2 : 0;
+		multiVal[k] = multiKind[k] ? 0 : strtol(v.c_str(), NULL, 16);
+	}
+	multiSince = millis();
+	multiPending = true;
+	SendLog("TX_kolejka_multi_" + p);
+}
+
 void QueueRaw(String p)
 {
 	p.trim();
@@ -1011,17 +1052,26 @@ void QueueClockSync()
 
 void SendFrame(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 {
-	uint8_t f[12];
-	f[0] = 0x02; f[1] = 0x26;
-	f[2] = addr >> 8; f[3] = addr & 0xFF;
-	f[4] = reg >> 8;  f[5] = reg & 0xFF;
-	f[6] = val >> 8;  f[7] = val & 0xFF;
-	f[8] = 0x02; f[9] = 0x18;
-	uint16_t crc = Crc16Bytes(f, 8);
-	f[10] = crc >> 8; f[11] = crc & 0xFF;
+	SendFrameMulti(addr, &reg, &val, 1, gapMs);
+}
+
+void SendFrameMulti(uint16_t addr, const uint16_t* regs, const uint16_t* vals, int n, uint8_t gapMs)
+{
+	uint8_t f[8 + 4 * MULTI_MAX];
+	int len = 0;
+	f[len++] = 0x02; f[len++] = 0x26;
+	f[len++] = addr >> 8; f[len++] = addr & 0xFF;
+	for (int k = 0; k < n; k++)
+	{
+		f[len++] = regs[k] >> 8; f[len++] = regs[k] & 0xFF;
+		f[len++] = vals[k] >> 8; f[len++] = vals[k] & 0xFF;
+	}
+	uint16_t crc = Crc16Bytes(f, len); // CRC bez znacznika konca 0218 (jak w SendFrame)
+	f[len++] = 0x02; f[len++] = 0x18;
+	f[len++] = crc >> 8; f[len++] = crc & 0xFF;
 
 	LEDOn(ledGreen);
-	for (int i = 0; i < 12; i++)
+	for (int i = 0; i < len; i++)
 	{
 		Serial.write(f[i]);
 		if (gapMs)
@@ -1034,8 +1084,8 @@ void SendFrame(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 	LEDOff(ledGreen);
 	countTx++;
 
-	char hex[25];
-	for (int i = 0; i < 12; i++)
+	char hex[2 * sizeof(f) + 1];
+	for (int i = 0; i < len; i++)
 		sprintf(hex + 2 * i, "%02x", f[i]);
 	lastTx = String(hex);
 	SendLog("TX_" + lastTx);
@@ -1046,6 +1096,37 @@ void SendFrame(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 void TxLoop()
 {
 	ModeVerifyLoop();
+
+	if (multiPending && !txCmd.pending)
+	{
+		if (readLine.length() != 0 || Serial.available() > 0 || lastFrameEnd == 0)
+			return;
+		unsigned long sinceFrame = millis() - lastFrameEnd;
+		bool waitedLong = millis() - multiSince > 20000;
+		if (!lastWasPoll && !waitedLong)
+			return;
+		if (sinceFrame < 50 || sinceFrame > 500)
+			return;
+		time_t now = time(nullptr);
+		struct tm* t = localtime(&now);
+		uint16_t vals[MULTI_MAX];
+		for (int k = 0; k < multiN; k++)
+		{
+			if (multiKind[k] == 1)
+			{
+				if (t->tm_sec > 10)
+					return; // godzine wysylamy na poczatku minuty
+				vals[k] = (uint16_t)((t->tm_hour << 8) | t->tm_min);
+			}
+			else if (multiKind[k] == 2)
+				vals[k] = (uint16_t)((t->tm_mday << 11) | ((t->tm_mon + 1) << 7) | ((t->tm_year + 1900 - 2008) & 0x7F));
+			else
+				vals[k] = multiVal[k];
+		}
+		multiPending = false;
+		SendFrameMulti(0x0000, multiReg, vals, multiN, 0);
+		return;
+	}
 
 	if (!txCmd.pending)
 		return;
@@ -1144,6 +1225,8 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
 		QueueClockSync();
 	else if (t == MQTT_BASE "/cmd/raw")
 		QueueRaw(p);
+	else if (t == MQTT_BASE "/cmd/raw_multi")
+		QueueMulti(p);
 	else if (t == MQTT_BASE "/cmd/mode")
 		SetMode(ModeFromName(p));
 	else if (t == "homeassistant/status" && p == "online")
