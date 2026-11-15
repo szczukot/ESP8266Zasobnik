@@ -172,3 +172,20 @@ Wniosek (poprawiony po dalszych testach): część „śmieciowych” dat **nie 
 - 17B9 = dzień·2048 + miesiąc·128 + (rok − 2000); dla lat sprzed 2000 (rok ujemny) wychodzi dodatkowo +0x100 (0962 = 01.01.1970, 727C = 14.03.1996, B2EB = 22.04.1979).
 - Zmiana daty w menu nie zmienia żadnego innego rejestru. Po ustawieniu daty sterownik przez ok. 1–2 min nie wysyła 1620 (zegara).
 - Zapis daty przez 0x0431 działa inaczej niż menu (rok 2026 trzeba wysłać jako 18) i ma skutki uboczne (patrz wyżej) — **nie używać** do czasu wyjaśnienia.
+
+## Testy zapisu daty 0x0431 — popołudnie 15.11.2026 (z wyłączoną korektą zegara)
+
+Po zapisie wyświetlacz (i 17B9) przechodzi przez kilka stanów, zanim się ustabilizuje (ok. 2,5 min, w tym czasie sterownik nie wysyła 1620):
+zapisana data → 00/00/00 (17B9 = 0x0030) → … → data końcowa.
+
+| Start (wyświetlacz) | Zapis | Zaraz po zapisie | Po drodze | Końcowo (17B9) |
+|---|---|---|---|---|
+| 14.03.1996 | 7D92 (15.11, pole roku 18) | 15/11/26 | 00/00/00, 24/12/06 | 14/03/96 (727C) |
+| 14.03.1996 | 8592 (16.11, pole roku 18) | ? | 00/00/00 | 15/03/96 (79E0) |
+| 14.03.1996 | 9BB1 (19.07, pole roku 49) | 19/07/01 | 00/00/00, 24/12/06 | 24/12/06 (C6A2) |
+
+Wnioski:
+- zaraz po zapisie dzień i miesiąc są zawsze takie, jak wysłane; rok = pole + 8 (dla pola 49 wyświetla się „01”),
+- po ok. 2,5 min sterownik datę „przelicza” i wychodzi inna — wcześniejsze „udane” zapisy z rana były najpewniej odczytami sprzed tego przeliczenia,
+- 17B9 po ustabilizowaniu pokazuje datę z wyświetlacza (dzień, miesiąc zgodne), ale pole roku dla lat sprzed 2000 / ostatnich zapisów jest kodowane niejednolicie (1996 jako 96 albo 124+przeniesienie, 2006 jako 162),
+- reguły przeliczania nie udało się ustalić — **zapisu 0x0431 nie używać**; datę ustawiać ręcznie, ESP tylko ostrzega (PR #40).
