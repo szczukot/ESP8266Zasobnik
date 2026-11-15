@@ -93,6 +93,8 @@ Zanik zasilania 15.11.2026 (~1 min, zegar sterownika się wyzerował) **nie doda
 
 Na wyświetlaczu (Statystyki) są też: **uzysk całkowity** (15.11.2026: 12,21 MWh) i **czas pracy pompy** (4773 h 21 min). Żaden z 192 odbieranych rejestrów nie ma tych wartości (sprawdzone kodowania: kWh, ×10 kWh, ×0,1 kWh, godziny, minuty) — sterownik prawdopodobnie ich nie wysyła.
 
+Nastawy menu użytkownika **podświetlenie** i **kontrast** też nie są wysyłane (15.11.2026 zmiana 3→4 i 0→1 nie zmieniła żadnego rejestru).
+
 ## Źródła
 
 - Instrukcja ST-402N PWM: https://sterownikitech.pl/img/products_files/st-402N-PWM.pdf
