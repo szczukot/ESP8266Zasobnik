@@ -45,6 +45,7 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechMode "1705" // 0 auto 1-odmrazanie 2-urlopowy
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
+#define FW_VERSION "2026.11.15-1" // podbijac przy kazdej zmianie
 #define TechTime "1620" // czas na sterowniku
 #define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
 #define TechPower "1b98" // uzysk chwilowy
@@ -127,9 +128,11 @@ bool autoClockEnabled = true; // tech_solar/cmd/auto_clock on/off - wylaczenie n
 // automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
 // odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
 #define DATE_WRITE_REG 0x0431
-// Zapis daty czasem daje smieciowa date (np. 14/03/96) - wtedy 17B9 po ok. minucie pokazuje te smieciowa date,
-// a kolejna proba zwykle sie udaje. Dlatego proby co 2 min, najwyzej 5 z rzedu (licznik zerowany po sukcesie).
-#define DATE_SYNC_MIN_INTERVAL 120000UL
+// Zapis daty daje albo dobra date, albo date o 11 204 dni wczesniejsza (np. 15.11.2026 -> 14.03.1996); po zapisie
+// sterownik przez ok. 2,5 min nie wysyla zegara, potem 17B9 pokazuje faktyczna date. Kolejny zapis zwykle sie udaje.
+// Zapis godziny przy dacie ustawionej przez ESP tez cofa date o 11 204 dni - wtedy ta sama kontrola zapisze date ponownie.
+// Dlatego proby co 4 min, najwyzej 5 z rzedu (licznik zerowany po sukcesie). Testy 15.11.2026.
+#define DATE_SYNC_MIN_INTERVAL 240000UL
 #define DATE_SYNC_MAX_TRIES 5
 int dateTries = 0;
 // Zapis daty 0x0431: ten sam uklad bitow co odczyt 17B9, ale ROK LICZONY OD 2008 (test 15.11.2026:
@@ -447,6 +450,8 @@ void HandleWWWClient()
 			s += "RSSI: " + String(rssi) + "dBm";
       s += "<br/>";
 			s += "Connect quality: " + String(dBmtoPercentage(rssi)) + " %";
+			s += "<br/>";
+			s += "Wersja: " FW_VERSION " (kompilacja " __DATE__ " " __TIME__ ")";
 			s += "<br/>";
 			s += "Working time: " + SystemUptime();
 			s += "<br/>";
@@ -1483,6 +1488,7 @@ void PublishDiag()
 
 	String j = "{\"rssi\":" + String(WiFi.RSSI()) +
 		",\"uptime\":" + String(millis() / 1000) +
+		",\"ver\":\"" FW_VERSION "\"" +
 		",\"heap\":" + String(ESP.getFreeHeap()) +
 		",\"heap_max_block\":" + String(ESP.getMaxFreeBlockSize()) +
 		",\"heap_frag\":" + String(ESP.getHeapFragmentation()) +
@@ -1503,7 +1509,7 @@ void PublishDiscoveryEntity(const char* component, const char* obj, const char* 
 		p += String(",\"stat_t\":\"" MQTT_BASE "/") + stateTopic + "\"";
 	p += ",\"avty_t\":\"" MQTT_BASE "/status\"";
 	p += extra;
-	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-402N PWM\",\"sw\":\"ESP8266Zasobnik\"}";
+	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-402N PWM\",\"sw\":\"ESP8266Zasobnik " FW_VERSION "\"}";
 	p += "}";
 
 	mqtt.publish(topic.c_str(), p.c_str(), true);
@@ -1561,6 +1567,8 @@ void PublishDiscovery()
 		",\"dev_cla\":\"signal_strength\",\"unit_of_meas\":\"dBm\",\"stat_cla\":\"measurement\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.rssi }}\"");
 	PublishDiscoveryEntity("sensor", "uptime", "Czas pracy", "diag",
 		",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"ent_cat\":\"diagnostic\",\"val_tpl\":\"{{ value_json.uptime }}\"");
+	PublishDiscoveryEntity("sensor", "version", "Wersja programu", "diag",
+		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:tag\",\"val_tpl\":\"{{ value_json.ver }}\"");
 	PublishDiscoveryEntity("sensor", "reset_reason", "Przyczyna restartu", "diag",
 		",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:restart-alert\",\"val_tpl\":\"{{ value_json.reset }}\"");
 	PublishDiscoveryEntity("sensor", "heap", "Wolna pamiec", "diag",
