@@ -7,6 +7,8 @@ Oznaczenia pewności:
 - 🟡 **prawdopodobne** — pasuje do instrukcji i wartości, nie sprawdzone zmianą,
 - ❔ **nieznane** — opis tego, co zaobserwowano.
 
+Ramka: `0226` (początek), adresat (`0000` wszyscy, `FFF4` moduł ethernet, `FFFA` regulator pokojowy, `FFF8` moduł GSM), pary rejestr–wartość, `0218` (koniec) + CRC. Puste zapytanie `0226 FFF4 0218` to sterownik odpytujący moduł ethernet — w tej roli występuje ESP.
+
 Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odczytu (np. zegar: odczyt 0x1620 = 5664 → zapis 664 = 0x0298). Sterownik wysyła rejestry zapisu zawsze z wartością 0000.
 
 ## Temperatury i wyjścia
@@ -23,11 +25,11 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1757 | ✅ | moc (obroty) pompy solarnej | % |
 | 1756, 1758, 1759, 175A | 🟡 | pozostałe wyjścia (pompa 2/zawór, peryferia) | w schemacie 1 zawsze 0 |
 | 1705 | ✅ | tryb pracy | 0 auto, 1 odmrażanie, 2 urlopowy |
-| 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora |
+| 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora; wg słownika dzien.net (jako 01F4): 0xD4–0xD7 uszkodzony czujnik solara 1–4 |
 | 1620 | ✅ | zegar sterownika | starszy bajt = godzina, młodszy = minuta (0x083A = 08:58); zapis przez 0x0298 |
 | 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok − 2000 (0x7D9A = 15.11.2026, 0x759A = 14.11, 0x6D9A = 13.11); zmienia się o północy sterownika; po zaniku zasilania data śmieciowa; zapis prawdopodobnie przez 0x0431 (niesprawdzony) |
-| 15A7 | 🟡 | typ urządzenia | 0x20 (wg projektu Tech_RS-mqtt-gateway: DEVICE_TYPE) |
-| 16FF | 🟡 | model urządzenia | 0x22 (wg Tech_RS-mqtt-gateway: DEVICE_MODEL) |
+| 15A7 | ✅ | typ sterownika | 0x20 = **ST-402** (słownik dzien.net) |
+| 16FF | 🟡 | typ/model sterownika (drugi rejestr) | 0x22; w słowniku dzien.net opisany ze znakami zapytania, kodu 0x22 tam nie ma |
 
 ## Uzyski
 
@@ -54,6 +56,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 |---|---|---|---|
 | 1C06 | 🟡 | kod serwisowy | 112 = „0112” (fabryczny wg instrukcji) |
 | 1B6A | 🟡 | temperatura antyzamarzania kolektora | −10 °C (zakres −50…+10) |
+| 1B66 | ✅ | maksymalna temperatura pracy kolektorów | 133 °C (słownik dzien.net) |
 | 1B5A…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
 
 ## Dzienniki zdarzeń (menu Statystyki)
@@ -109,6 +112,8 @@ Roczne statystyki wyglądają na zepsute przez złą datę w sterowniku (np. wpi
 Nastawy menu użytkownika **podświetlenie** i **kontrast** też nie są wysyłane (15.11.2026 zmiana 3→4 i 0→1 nie zmieniła żadnego rejestru).
 
 ## Źródła
+
+- Słownik rejestrów TECH: https://dzien.net/tech/index.php?baza=slownik
 
 - Instrukcja ST-402N PWM: https://sterownikitech.pl/img/products_files/st-402N-PWM.pdf
 - Tech_RS-mqtt-gateway (sterowniki kotłowe TECH, m.in. 1620, 1621, 157C, 15A7, 16FF): https://github.com/agirilovich/Tech_RS-mqtt-gateway
