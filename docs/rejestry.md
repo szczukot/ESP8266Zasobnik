@@ -189,3 +189,26 @@ Wnioski:
 - po ok. 2,5 min sterownik datę „przelicza” i wychodzi inna — wcześniejsze „udane” zapisy z rana były najpewniej odczytami sprzed tego przeliczenia,
 - 17B9 po ustabilizowaniu pokazuje datę z wyświetlacza (dzień, miesiąc zgodne), ale pole roku dla lat sprzed 2000 / ostatnich zapisów jest kodowane niejednolicie (1996 jako 96 albo 124+przeniesienie, 2006 jako 162),
 - reguły przeliczania nie udało się ustalić — **zapisu 0x0431 nie używać**; datę ustawiać ręcznie, ESP tylko ostrzega (PR #40).
+
+## Zapis daty 0x0431 — rozwiązanie (15.11.2026, wieczór)
+
+Sesje z resetem sterownika przed każdą (A → X → E, odczyt po ~1/2/3 min, bez ustawiania zegara) pokazały, że przeliczenie jest **w pełni deterministyczne**. Zapisana data W (rok = 2008 + pole) po ~2,5 min zamienia się na:
+
+| Zapis (rok W) | Wynik | Format 17B9 |
+|---|---|---|
+| 2008 – 31.12.2055 | W − 11 204 dni (2045→2015, 2054→2024, 31.12.2055→28.04.2025) | A albo B |
+| od 15.01.2056 | W − 18 470 / 18 471 dni (2056→2005, 2077→2026) | B |
+
+- 18 470 przy zegarze sterownika wieczorem (~17:40), 18 471 ok. północy (sesja 1 przy 15:00 też +1 dzień) — zależy od godziny na zegarze.
+- Jeden bit = dokładnie rok albo miesiąc kalendarzowy; poprzedni stan daty nie ma wpływu.
+- **Zapis `5345` (10.06.2077) daje 15/11/26** (17B9 = 7E36). Zapis godziny (0x0298) potem daty nie psuje (sprawdzone).
+- Zapis daty i godziny w jednej ramce nic nie zmienia.
+
+Formaty odczytu 17B9 (dzień zawsze w bitach 15–11):
+
+- **A** (data z menu): `d·2048 + m·128 + (rok − 2000)` — 7D9A = 15.11.2026,
+- **B** (po zaniku zasilania i po zapisie 0x0431): `d·2048 + m·128 + rr + 156`, rr = rok dwucyfrowy — 0962 = 01.01.70, 727C = 14.03.96, BEA2 = 23.12.06, 7E36 = 15.11.26.
+
+Stulecia sterownik nie pokazuje (rok dwucyfrowy), a lata przestępne 1901–2099 wypadają tak samo, więc format B wystarcza. Gdy wartość pasuje do obu formatów, ESP wybiera datę bliższą dzisiejszej. Do sprawdzenia: czy dzień tygodnia (uzysk tygodniowy) liczy się w formacie B poprawnie.
+
+ESP (FW 2026.11.15-5, PR #42) zapisuje „dziś + 18 470 dni” i po każdej próbie koryguje przesunięcie o różnicę w dniach.
