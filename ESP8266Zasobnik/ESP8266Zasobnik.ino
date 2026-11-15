@@ -45,7 +45,7 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechMode "1705" // 0 auto 1-odmrazanie 2-urlopowy
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
-#define FW_VERSION "2026.11.15-1" // podbijac przy kazdej zmianie
+#define FW_VERSION "2026.11.15-2" // podbijac przy kazdej zmianie
 #define TechTime "1620" // czas na sterowniku
 #define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
 #define TechPower "1b98" // uzysk chwilowy
@@ -123,6 +123,7 @@ int countTx = 0;
 #define CLOCK_MAX_DIFF_MIN 2              // od jakiej roznicy (minuty) poprawiac zegar
 #define CLOCK_SYNC_MIN_INTERVAL 600000UL  // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
 unsigned long lastAutoClockSync = 0;
+bool autoDateEnabled = false; // tech_solar/cmd/auto_date on/off - domyslnie WYLACZONE: 17B9 nie zawsze pokazuje date z wyswietlacza
 bool autoClockEnabled = true; // tech_solar/cmd/auto_clock on/off - wylaczenie na czas testow (do restartu ESP)
 
 // automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
@@ -479,7 +480,7 @@ void HandleWWWClient()
 			s += "<br/>";
 			s += "TX: " + String(countTx) + "   ostatnia ramka: " + lastTx + (txCmd.pending ? "   (czeka w kolejce)" : "");
 			s += "<br/>";
-			s += String("Automatyczne korekty zegara") + (autoClockEnabled ? "" : " (WYLACZONE)") + ": " + String(countAutoClockSync) + "   daty: " + String(countAutoDateSync);
+			s += String("Automatyczne korekty zegara") + (autoClockEnabled ? "" : " (WYLACZONE)") + ": " + String(countAutoClockSync) + "   daty" + (autoDateEnabled ? "" : " (WYLACZONE)") + ": " + String(countAutoDateSync);
 			s += "<br/><br/>";
 			s += ValuesHTML();
 			s += RawHTML();
@@ -1007,7 +1008,7 @@ String ControllerDateText(long v)
 // Porownuje date sterownika (17B9) z data z NTP i w razie roznicy ustawia ja automatycznie.
 void CheckControllerDate()
 {
-	if (mypin.indexOf(TechDate) == -1 || txCmd.pending)
+	if (!autoDateEnabled || mypin.indexOf(TechDate) == -1 || txCmd.pending)
 		return;
 	time_t now = time(nullptr);
 	if (now < 1600000000)
@@ -1257,6 +1258,12 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
 		QueueRaw(p);
 	else if (t == MQTT_BASE "/cmd/raw_multi")
 		QueueMulti(p);
+	else if (t == MQTT_BASE "/cmd/auto_date")
+	{
+		autoDateEnabled = (p == "on");
+		dateTries = 0;
+		SendLog(String("Auto_data_") + (autoDateEnabled ? "ON" : "OFF"));
+	}
 	else if (t == MQTT_BASE "/cmd/auto_clock")
 	{
 		autoClockEnabled = (p != "off");
