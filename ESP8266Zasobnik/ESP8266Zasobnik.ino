@@ -117,7 +117,11 @@ unsigned long lastAutoClockSync = 0;
 // automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
 // odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
 #define DATE_WRITE_REG 0x0431
-#define DATE_SYNC_MIN_INTERVAL 600000UL // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
+// Zapis daty czasem daje smieciowa date (np. 14/03/96) - wtedy 17B9 po ok. minucie pokazuje te smieciowa date,
+// a kolejna proba zwykle sie udaje. Dlatego proby co 2 min, najwyzej 5 z rzedu (licznik zerowany po sukcesie).
+#define DATE_SYNC_MIN_INTERVAL 120000UL
+#define DATE_SYNC_MAX_TRIES 5
+int dateTries = 0;
 // Zapis daty 0x0431: ten sam uklad bitow co odczyt 17B9, ale ROK LICZONY OD 2008 (test 15.11.2026:
 // zapis 0x7D92 = 15.11.(2008+18) -> wyswietlacz 15/11/26; 0x7D99 -> 15/11/33; rok 2034+ daje smieciowa date).
 // Odczyt 17B9 ma rok od 2000 (gdy date ustawia sie recznie), a po zapisie z ESP 17B9 pokazuje zapisana wartosc.
@@ -970,11 +974,18 @@ void CheckControllerDate()
 	uint16_t want = DateValue(t, DATE_READ_YEAR_BASE);
 	// po zapisie z ESP 17B9 pokazuje wartosc zapisana (rok od 2008) - to tez jest poprawna data
 	if (ctrl == want || ctrl == DateValue(t, DATE_WRITE_YEAR_BASE))
+	{
+		if (dateTries > 0)
+			SendLog("Data_OK_po_" + String(dateTries) + "_probach");
+		dateTries = 0;
 		return;
+	}
 	if (lastAutoDateSync != 0 && millis() - lastAutoDateSync < DATE_SYNC_MIN_INTERVAL)
 		return;
-	if (countAutoDateSync >= 3)
-		return; // 3 proby bez skutku - rejestr zapisu daty chyba inny; nie probujemy do restartu ESP
+	if (dateTries >= DATE_SYNC_MAX_TRIES)
+		return; // za duzo prob z rzedu - nie probujemy do restartu ESP
+
+	dateTries++;
 
 	lastAutoDateSync = millis();
 	countAutoDateSync++;
