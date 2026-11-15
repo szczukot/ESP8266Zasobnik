@@ -1302,7 +1302,7 @@ void PublishDiscoveryEntity(const char* component, const char* obj, const char* 
 		p += String(",\"stat_t\":\"" MQTT_BASE "/") + stateTopic + "\"";
 	p += ",\"avty_t\":\"" MQTT_BASE "/status\"";
 	p += extra;
-	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-401n\",\"sw\":\"ESP8266Zasobnik\"}";
+	p += ",\"dev\":{\"ids\":[\"" + deviceId + "\"],\"name\":\"Sterownik TECH solar\",\"mf\":\"TECH\",\"mdl\":\"ST-402N PWM\",\"sw\":\"ESP8266Zasobnik\"}";
 	p += "}";
 
 	mqtt.publish(topic.c_str(), p.c_str(), true);

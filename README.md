@@ -1,6 +1,6 @@
 # ESP8266Zasobnik
 
-ESP8266 (Witty Cloud) czytający ramki ze sterownika solarnego TECH (ST-401n) po linii RJ12
+ESP8266 (Witty Cloud) czytający ramki ze sterownika solarnego TECH (ST-402N PWM) po linii RJ12
 i wysyłający wartości przez MQTT do Home Assistant (autowykrywanie).
 
 ## Konfiguracja
