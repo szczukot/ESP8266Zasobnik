@@ -37,7 +37,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1B99 | ✅ | uzysk dzienny | ×0,1 kWh; zerowany ok. 00:59 |
 | 1B9A | ✅ | uzysk tygodniowy | kWh; zmienia się raz na dobę ok. 00:59; prawdopodobnie suma z 7 dni (14→15.11 spadł 91→86); przetrwa zanik zasilania |
 | 1B9B | ✅ | uzysk miesięczny | kWh; zmienia się raz na dobę ok. 00:59; reguła niejasna (+8, potem +31) — możliwy wpływ złej daty w sterowniku; przetrwa zanik zasilania |
-| — | ❔ | uzysk roczny | instrukcja go wymienia, rejestru jeszcze nie znaleziono (kandydat 1B9C) |
+| 1B9C | ✅ | uzysk roczny — **młodsze 16 bitów** | kWh; wyświetlacz 15.11.2026: 105470 kWh = 0x0001_9BFE, a 1B9C = 0x9BFE; starsze słowo (=1) nie znalezione w ramkach; wartość bezsensowna, prawdopodobnie przez złą datę w sterowniku |
 
 ## Nastawy — zliczanie energii (menu serwisowe)
 
@@ -85,13 +85,26 @@ Zanik zasilania 15.11.2026 (~1 min, zegar sterownika się wyzerował) **nie doda
 
 | Rejestr | Obserwacje |
 |---|---|
-| 1B9C | 0x9BFE (39934), bez zmian przez noc i po zaniku zasilania; kandydat na uzysk roczny (×0,1 kWh?) |
-| 1C04 | 0xF25F, 15.11 ok. 9:00 zmiana na 0xF260 (+1) |
+| 1C04 | 0xF25F, 15.11 ok. 9:00 zmiana na 0xF260 (+1), wkrótce po starcie pompy |
+| 1BA1, 1BA2 | 122 i 142; 142 = temp. zbiornika 14.2 °C z 14.11 wieczorem — może dzienne maksima (kolektor/zbiornik ×0,1 °C)? do obserwacji |
 | 1C07, 1B58, 1B9D…1BA4, 1BFF…1C03, 1C05 | stałe |
 
 ## Statystyki, których nie ma w ramkach
 
-Na wyświetlaczu (Statystyki) są też: **uzysk całkowity** (15.11.2026: 12,21 MWh) i **czas pracy pompy** (4773 h 21 min). Żaden z 192 odbieranych rejestrów nie ma tych wartości (sprawdzone kodowania: kWh, ×10 kWh, ×0,1 kWh, godziny, minuty) — sterownik prawdopodobnie ich nie wysyła.
+Wartości z wyświetlacza (Statystyki) 15.11.2026 i wynik szukania w 192 rejestrach:
+
+| Statystyka | Wyświetlacz | W ramkach |
+|---|---|---|
+| całkowity uzysk | 12,21 MWh | brak (sprawdzone kWh, ×10, ×0,1, 32 bity) |
+| całkowita maks. temp. kolektora | 2693 (bzdura) | brak (0x0A85) |
+| całkowita maks. temp. zbiornika | 73 °C | brak (0x49 / 0x2DA) |
+| całkowity czas pracy pompy | 4773 h 21 min | brak (godziny, minuty, sekundy) |
+| roczny uzysk | 105470 kWh | ✅ 1B9C = młodsze słowo |
+| roczna maks. temp. kolektora | 34 °C | ❔ 0x22 jest w 16FF i 1BD5 — raczej przypadek |
+| roczna maks. temp. zbiornika | 26 °C | brak (0x1A / 0x104) |
+| roczny czas pracy pompy | 28 h 56 min | brak (minuty 0x06C8, sekundy) |
+
+Roczne statystyki wyglądają na zepsute przez złą datę w sterowniku (np. wpis z 2031 r. w dzienniku zaników).
 
 Nastawy menu użytkownika **podświetlenie** i **kontrast** też nie są wysyłane (15.11.2026 zmiana 3→4 i 0→1 nie zmieniła żadnego rejestru).
 
