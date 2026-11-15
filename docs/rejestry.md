@@ -25,6 +25,9 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1705 | ✅ | tryb pracy | 0 auto, 1 odmrażanie, 2 urlopowy |
 | 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora |
 | 1620 | ✅ | zegar sterownika | starszy bajt = godzina, młodszy = minuta (0x083A = 08:58); zapis przez 0x0298 |
+| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok − 2000 (0x7D9A = 15.11.2026, 0x759A = 14.11, 0x6D9A = 13.11); zmienia się o północy sterownika; po zaniku zasilania data śmieciowa; zapis prawdopodobnie przez 0x0431 (niesprawdzony) |
+| 15A7 | 🟡 | typ urządzenia | 0x20 (wg projektu Tech_RS-mqtt-gateway: DEVICE_TYPE) |
+| 16FF | 🟡 | model urządzenia | 0x22 (wg Tech_RS-mqtt-gateway: DEVICE_MODEL) |
 
 ## Uzyski
 
@@ -84,5 +87,13 @@ Zanik zasilania 15.11.2026 (~1 min, zegar sterownika się wyzerował) **nie doda
 |---|---|
 | 1B9C | 0x9BFE (39934), bez zmian przez noc i po zaniku zasilania; kandydat na uzysk roczny (×0,1 kWh?) |
 | 1C04 | 0xF25F, 15.11 ok. 9:00 zmiana na 0xF260 (+1) |
-| 17B9 | zmienia się po zaniku zasilania i rzadko poza tym (0x6D9A → 0x759A w nocy, → 0x0962 po zaniku, → 0xD63D) |
-| 15A7, 16FF, 1C07, 1B58, 1B9D…1BA4, 1BFF…1C03, 1C05 | stałe |
+| 1C07, 1B58, 1B9D…1BA4, 1BFF…1C03, 1C05 | stałe |
+
+## Statystyki, których nie ma w ramkach
+
+Na wyświetlaczu (Statystyki) są też: **uzysk całkowity** (15.11.2026: 12,21 MWh) i **czas pracy pompy** (4773 h 21 min). Żaden z 192 odbieranych rejestrów nie ma tych wartości (sprawdzone kodowania: kWh, ×10 kWh, ×0,1 kWh, godziny, minuty) — sterownik prawdopodobnie ich nie wysyła.
+
+## Źródła
+
+- Instrukcja ST-402N PWM: https://sterownikitech.pl/img/products_files/st-402N-PWM.pdf
+- Tech_RS-mqtt-gateway (sterowniki kotłowe TECH, m.in. 1620, 1621, 157C, 15A7, 16FF): https://github.com/agirilovich/Tech_RS-mqtt-gateway
