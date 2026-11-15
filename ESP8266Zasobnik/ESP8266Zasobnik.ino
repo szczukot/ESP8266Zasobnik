@@ -122,6 +122,7 @@ int countTx = 0;
 #define CLOCK_MAX_DIFF_MIN 2              // od jakiej roznicy (minuty) poprawiac zegar
 #define CLOCK_SYNC_MIN_INTERVAL 600000UL  // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
 unsigned long lastAutoClockSync = 0;
+bool autoClockEnabled = true; // tech_solar/cmd/auto_clock on/off - wylaczenie na czas testow (do restartu ESP)
 
 // automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
 // odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
@@ -466,7 +467,7 @@ void HandleWWWClient()
 			s += "<br/>";
 			s += "TX: " + String(countTx) + "   ostatnia ramka: " + lastTx + (txCmd.pending ? "   (czeka w kolejce)" : "");
 			s += "<br/>";
-			s += "Automatyczne korekty zegara: " + String(countAutoClockSync) + "   daty: " + String(countAutoDateSync);
+			s += String("Automatyczne korekty zegara") + (autoClockEnabled ? "" : " (WYLACZONE)") + ": " + String(countAutoClockSync) + "   daty: " + String(countAutoDateSync);
 			s += "<br/><br/>";
 			s += ValuesHTML();
 			s += RawHTML();
@@ -954,7 +955,7 @@ void CheckControllerClock(const String& value)
 	if (txCmd.pending)
 		return;
 
-	if (drift && (lastAutoClockSync == 0 || millis() - lastAutoClockSync >= CLOCK_SYNC_MIN_INTERVAL))
+	if (drift && autoClockEnabled && (lastAutoClockSync == 0 || millis() - lastAutoClockSync >= CLOCK_SYNC_MIN_INTERVAL))
 	{
 		lastAutoClockSync = millis();
 		countAutoClockSync++;
@@ -1227,6 +1228,11 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
 		QueueRaw(p);
 	else if (t == MQTT_BASE "/cmd/raw_multi")
 		QueueMulti(p);
+	else if (t == MQTT_BASE "/cmd/auto_clock")
+	{
+		autoClockEnabled = (p != "off");
+		SendLog(String("Auto_zegar_") + (autoClockEnabled ? "ON" : "OFF"));
+	}
 	else if (t == MQTT_BASE "/cmd/mode")
 		SetMode(ModeFromName(p));
 	else if (t == "homeassistant/status" && p == "online")
