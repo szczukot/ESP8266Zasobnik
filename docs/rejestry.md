@@ -58,8 +58,10 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1B5B | ✅ | temperatura maksymalna zbiornika 1 | 80 °C |
 | 1B5C | ✅ | histereza zbiornika | 3 °C |
 | 1B5D | ✅ | temperatura minimalna zbiornika 1 | 10 °C |
+| 1B5E | ✅ | wychładzanie do zadanej | 1 = włączone |
+| 1B5F | ✅ | delta urlop | 35 °C |
 
-Wartości spisane z menu serwisowego 15.11.2026 i zgodne z kolejnymi rejestrami (75, 80, 3, 10) — dopasowanie po wartościach, bez zmiany nastawy.
+Wartości spisane z menu serwisowego 15.11.2026 i zgodne z kolejnymi rejestrami (75, 80, 3, 10, 1, 35) — dopasowanie po wartościach, bez zmiany nastawy.
 
 ## Nastawy — inne
 
@@ -68,7 +70,7 @@ Wartości spisane z menu serwisowego 15.11.2026 i zgodne z kolejnymi rejestrami 
 | 1C06 | 🟡 | kod serwisowy | 112 = „0112” (fabryczny wg instrukcji) |
 | 1B6A | 🟡 | temperatura antyzamarzania kolektora | −10 °C (zakres −50…+10) |
 | 1B66 | ✅ | maksymalna temperatura pracy kolektorów | 133 °C (słownik dzien.net) |
-| 1B5E…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
+| 1B60…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
 
 ## Dzienniki zdarzeń (menu Statystyki)
 
