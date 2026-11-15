@@ -45,7 +45,7 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechMode "1705" // 0 auto 1-odmrazanie 2-urlopowy
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
-#define FW_VERSION "2026.11.15-2" // podbijac przy kazdej zmianie
+#define FW_VERSION "2026.11.15-3" // podbijac przy kazdej zmianie
 #define TechTime "1620" // czas na sterowniku
 #define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
 #define TechPower "1b98" // uzysk chwilowy
@@ -1002,6 +1002,15 @@ String ControllerDateText(long v)
 	time_t now = time(nullptr);
 	if (now > 1600000000 && v == DateValue(localtime(&now), DATE_WRITE_YEAR_BASE))
 		return DateText(v, DATE_WRITE_YEAR_BASE) + " (zapisana przez ESP)";
+	// lata sprzed 2000 (01.01.1970 po zaniku zasilania, smieciowe daty po zapisie): 17B9 = d*2048 + m*128 + (rok-2000) + 256,
+	// czyli pole roku 98..127 i pole miesiaca o 1 za duze (0962 = 01.01.1970, 727C = 14.03.1996, B2EB = 22.04.1979)
+	long y = v & 0x7F;
+	if (y >= 98)
+	{
+		char buf[16];
+		sprintf(buf, "%02ld.%02ld.%04ld", (v >> 11) & 0x1F, ((v >> 7) & 0x0F) - 1, 1872 + y);
+		return String(buf);
+	}
 	return DateText(v, DATE_READ_YEAR_BASE);
 }
 
