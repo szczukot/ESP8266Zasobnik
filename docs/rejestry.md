@@ -27,7 +27,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1705 | ✅ | tryb pracy | 0 auto, 1 odmrażanie, 2 urlopowy |
 | 157C | ✅ | stan sterownika | 0x62 praca normalna, 0x1E praca ręczna, 0x68 przegrzanie kolektora; wg słownika dzien.net (jako 01F4): 0xD4–0xD7 uszkodzony czujnik solara 1–4 |
 | 1620 | ✅ | zegar sterownika | starszy bajt = godzina, młodszy = minuta (0x083A = 08:58); zapis przez 0x0298 |
-| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok − 2000 (0x7D9A = 15.11.2026, 0x759A = 14.11, 0x6D9A = 13.11); zmienia się o północy sterownika; po zaniku zasilania data śmieciowa; zapis prawdopodobnie przez 0x0431 (niesprawdzony) |
+| 17B9 | ✅ | data sterownika | bity 15–11 = dzień, 10–7 = miesiąc, 6–0 = rok − 2000 (0x7D9A = 15.11.2026, 0x759A = 14.11, 0x6D9A = 13.11); zmienia się o północy sterownika; po zaniku zasilania data śmieciowa (np. 0x0962 = 01.02.2098); **zapis przez 0x0431 — potwierdzony** 15.11.2026 (ramka `0226 0000 0431 7D9A 0218 …`) |
 | 15A7 | ✅ | typ sterownika | 0x20 = **ST-402** (słownik dzien.net) |
 | 16FF | 🟡 | typ/model sterownika (drugi rejestr) | 0x22; w słowniku dzien.net opisany ze znakami zapytania, kodu 0x22 tam nie ma |
 
@@ -50,6 +50,17 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1B8B | ✅ | stężenie glikolu | 50 % |
 | 1B8C | ✅ | kalibracja | 0 |
 
+## Nastawy — zbiornik (menu serwisowe)
+
+| Rejestr | Pewność | Znaczenie | Wartość u nas |
+|---|---|---|---|
+| 1B5A | ✅ | temperatura zadana zbiornika | 75 °C |
+| 1B5B | ✅ | temperatura maksymalna zbiornika 1 | 80 °C |
+| 1B5C | ✅ | histereza zbiornika | 3 °C |
+| 1B5D | ✅ | temperatura minimalna zbiornika 1 | 10 °C |
+
+Wartości spisane z menu serwisowego 15.11.2026 i zgodne z kolejnymi rejestrami (75, 80, 3, 10) — dopasowanie po wartościach, bez zmiany nastawy.
+
 ## Nastawy — inne
 
 | Rejestr | Pewność | Znaczenie | Wartość u nas |
@@ -57,7 +68,7 @@ Zapis: rejestry zapisu mają numer **o 0x1388 (5000) mniejszy** od rejestru odcz
 | 1C06 | 🟡 | kod serwisowy | 112 = „0112” (fabryczny wg instrukcji) |
 | 1B6A | 🟡 | temperatura antyzamarzania kolektora | −10 °C (zakres −50…+10) |
 | 1B66 | ✅ | maksymalna temperatura pracy kolektorów | 133 °C (słownik dzien.net) |
-| 1B5A…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
+| 1B5E…1B97 (poza opisanymi) | ❔ | pozostałe nastawy menu serwisowego (delty, histerezy, min/max pompy, współczynnik biegów, przegrzanie…) | do dopasowania z wartościami z menu |
 
 ## Dzienniki zdarzeń (menu Statystyki)
 
