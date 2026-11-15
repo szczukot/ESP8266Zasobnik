@@ -46,6 +46,7 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
 #define TechTime "1620" // czas na sterowniku
+#define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
 #define TechPower "1b98" // uzysk chwilowy
 #define TechPowerDaily "1b99" // uzysk dzienny
 #define TechEnergyWeek "1b9a" // uzysk tygodniowy, kWh bez dzielnika
@@ -101,8 +102,9 @@ struct TxCommand
 	uint8_t gapMs;
 	unsigned long since;
 	bool isClock;      // zegar: wartosc liczona w chwili wysylki, na poczatku minuty
+	bool isDate;       // data: wartosc liczona w chwili wysylki
 };
-TxCommand txCmd = { false, 0, 0, 0, 0, 0, false };
+TxCommand txCmd = { false, 0, 0, 0, 0, 0, false, false };
 time_t clockRecvTime = 0; // kiedy (wg NTP) przyszla ostatnia wartosc 1620
 String lastTx = "-";
 int countTx = 0;
@@ -111,6 +113,13 @@ int countTx = 0;
 #define CLOCK_MAX_DIFF_MIN 2              // od jakiej roznicy (minuty) poprawiac zegar
 #define CLOCK_SYNC_MIN_INTERVAL 600000UL  // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
 unsigned long lastAutoClockSync = 0;
+
+// automatyczne ustawianie daty sterownika wg NTP (po zaniku zasilania sterownik ma date smieciowa)
+// odczyt 17B9 = 6073 -> zapis parametru 1073 = 0x0431 (wg reguly zapis = odczyt - 5000)
+#define DATE_WRITE_REG 0x0431
+#define DATE_SYNC_MIN_INTERVAL 600000UL // nie czesciej niz co 10 min (gdyby zapis nie dzialal)
+unsigned long lastAutoDateSync = 0;
+int countAutoDateSync = 0;
 
 // zapis trybu pracy: odczyt 1705 = 5893 -> zapis parametru 893 = 0x037D (wg reguly, do potwierdzenia)
 #define MODE_WRITE_REG 0x037D
@@ -445,7 +454,7 @@ void HandleWWWClient()
 			s += "<br/>";
 			s += "TX: " + String(countTx) + "   ostatnia ramka: " + lastTx + (txCmd.pending ? "   (czeka w kolejce)" : "");
 			s += "<br/>";
-			s += "Automatyczne korekty zegara: " + String(countAutoClockSync);
+			s += "Automatyczne korekty zegara: " + String(countAutoClockSync) + "   daty: " + String(countAutoDateSync);
 			s += "<br/><br/>";
 			s += ValuesHTML();
 			s += RawHTML();
@@ -582,6 +591,11 @@ String StateName(long state)
 		case 0x1E: return "praca ręczna";
 		case 0x62: return "praca normalna";
 		case 0x68: return "przegrzanie kolektora";
+		// bledy czujnikow wg slownika dzien.net/tech (rejestr 01F4 = zapis 157C)
+		case 0xD4: return "uszkodzony czujnik 1 (kolektor)";
+		case 0xD5: return "uszkodzony czujnik 2 (zbiornik)";
+		case 0xD6: return "uszkodzony czujnik 3";
+		case 0xD7: return "uszkodzony czujnik 4";
 	}
 	char buf[12];
 	sprintf(buf, "kod 0x%02lX", state & 0xFF);
@@ -712,6 +726,7 @@ String ValuesHTML()
 		}
 		s += "<br/>";
 	}
+	if (mypin.indexOf(TechDate) != -1) s += "Data sterownika: " + DateText(HexToLong(mypin[TechDate])) + "<br/>";
 	if (mypin.indexOf(TechState) != -1) s += "Stan: " + StateName(HexToLong(mypin[TechState])) + " (" + mypin[TechState] + ")<br/>";
 	return s;
 }
@@ -822,6 +837,7 @@ void QueueTx(uint16_t addr, uint16_t reg, uint16_t val, uint8_t gapMs)
 	txCmd.gapMs = gapMs;
 	txCmd.since = millis();
 	txCmd.isClock = false;
+	txCmd.isDate = false;
 	txCmd.pending = true;
 
 	char buf[48];
@@ -893,16 +909,77 @@ void CheckControllerClock(const String& value)
 
 	if (txCmd.pending)
 		return;
-	if (lastAutoClockSync != 0 && millis() - lastAutoClockSync < CLOCK_SYNC_MIN_INTERVAL)
-		return;
 
-	if (drift)
+	if (drift && (lastAutoClockSync == 0 || millis() - lastAutoClockSync >= CLOCK_SYNC_MIN_INTERVAL))
 	{
 		lastAutoClockSync = millis();
 		countAutoClockSync++;
 		SendLog("Zegar_auto_roznica_" + String(diff) + "min");
 		QueueClockSync();
+		return;
 	}
+
+	// zegar w porzadku - sprawdz date (zegar przychodzi co minute, wiec data sprawdzana tez co minute)
+	if (!drift)
+		CheckControllerDate();
+}
+
+uint16_t DateValue(struct tm* t)
+{
+	return (uint16_t)((t->tm_mday << 11) | ((t->tm_mon + 1) << 7) | ((t->tm_year + 1900 - 2000) & 0x7F));
+}
+
+String DateText(long v)
+{
+	char buf[16];
+	sprintf(buf, "%02ld.%02ld.%04ld", (v >> 11) & 0x1F, (v >> 7) & 0x0F, 2000 + (v & 0x7F));
+	return String(buf);
+}
+
+// Porownuje date sterownika (17B9) z data z NTP i w razie roznicy ustawia ja automatycznie.
+void CheckControllerDate()
+{
+	if (mypin.indexOf(TechDate) == -1 || txCmd.pending)
+		return;
+	time_t now = time(nullptr);
+	if (now < 1600000000)
+		return; // brak czasu z NTP
+	struct tm* t = localtime(&now);
+	// okolice polnocy pomijamy - sterownik zmienia date wg swojego zegara
+	if ((t->tm_hour == 23 && t->tm_min >= 55) || (t->tm_hour == 0 && t->tm_min < 5))
+		return;
+
+	long ctrl = HexToLong(mypin[TechDate]);
+	uint16_t want = DateValue(t);
+	if (ctrl == want)
+		return;
+	if (lastAutoDateSync != 0 && millis() - lastAutoDateSync < DATE_SYNC_MIN_INTERVAL)
+		return;
+	if (countAutoDateSync >= 3)
+		return; // 3 proby bez skutku - rejestr zapisu daty chyba inny; nie probujemy do restartu ESP
+
+	lastAutoDateSync = millis();
+	countAutoDateSync++;
+	SendLog("Data_auto_" + DateText(ctrl) + "_na_" + DateText(want));
+	QueueDateSync();
+}
+
+void QueueDateSync()
+{
+	if (time(nullptr) < 1600000000)
+	{
+		SendLog("TX_brak_czasu_NTP");
+		return;
+	}
+	txCmd.addr = 0x0000;
+	txCmd.reg = DATE_WRITE_REG;
+	txCmd.val = 0;          // wyliczane w TxLoop w chwili wysylki
+	txCmd.gapMs = 0;
+	txCmd.since = millis();
+	txCmd.isClock = false;
+	txCmd.isDate = true;
+	txCmd.pending = true;
+	SendLog("TX_kolejka_data");
 }
 
 void QueueClockSync()
@@ -922,6 +999,7 @@ void QueueClockSync()
 	txCmd.gapMs = 0;
 	txCmd.since = millis();
 	txCmd.isClock = true;
+	txCmd.isDate = false;
 	txCmd.pending = true;
 	SendLog("TX_kolejka_zegar");
 }
@@ -985,6 +1063,11 @@ void TxLoop()
 		if (t->tm_sec > 10)
 			return; // czekamy na poczatek nastepnej minuty
 		txCmd.val = (uint16_t)((t->tm_hour << 8) | t->tm_min);
+	}
+	if (txCmd.isDate)
+	{
+		time_t now = time(nullptr);
+		txCmd.val = DateValue(localtime(&now));
 	}
 
 	txCmd.pending = false;
