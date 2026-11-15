@@ -591,6 +591,11 @@ String StateName(long state)
 		case 0x1E: return "praca ręczna";
 		case 0x62: return "praca normalna";
 		case 0x68: return "przegrzanie kolektora";
+		// bledy czujnikow wg slownika dzien.net/tech (rejestr 01F4 = zapis 157C)
+		case 0xD4: return "uszkodzony czujnik 1 (kolektor)";
+		case 0xD5: return "uszkodzony czujnik 2 (zbiornik)";
+		case 0xD6: return "uszkodzony czujnik 3";
+		case 0xD7: return "uszkodzony czujnik 4";
 	}
 	char buf[12];
 	sprintf(buf, "kod 0x%02lX", state & 0xFF);
