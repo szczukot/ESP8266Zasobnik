@@ -153,3 +153,22 @@ Wniosek (poprawiony po dalszych testach): część „śmieciowych” dat **nie 
 - Sterownik przy zapisie godziny najpewniej odbudowuje datę z 17B9 (z rokiem od 2000), więc wartość zapisana przez ESP daje złą datę.
 - Zapis daty: rok = 2008 + pole (pewnie sprawdzone dla 2009, 2026, 2033). Wyniki dla 2008 i 2034 mogły być zepsute zapisem godziny — do ponownego sprawdzenia.
 - Do sprawdzenia: czy o północy sterownik sam przepisuje 17B9 do postaci z rokiem od 2000 (test 15→16.11.2026).
+
+## Odczyt 17B9 przy ręcznym ustawianiu daty (15.11.2026)
+
+| Data ustawiona w menu | 17B9 |
+|---|---|
+| 15.11.2026 | 7D9A |
+| 16.11.2026 | 859A |
+| 15.12.2026 | 7E1A |
+| 15.11.2027 | 7D9B |
+| 01.01.2009 | 0889 |
+| 31.12.2033 | FE21 |
+| 01.01.2000 (rok „00”) | 0880 |
+| 31.12.2099 (rok „99”) | FE63 |
+| 01.01.1970 (po zaniku zasilania, bez ustawiania) | 0962 |
+
+- Menu: rok dwucyfrowy 00–99 = 2000–2099, przewija się w kółko; po zaniku zasilania data domyślna 01.01.1970 (wybór roku czterocyfrowy).
+- 17B9 = dzień·2048 + miesiąc·128 + (rok − 2000); dla lat sprzed 2000 (rok ujemny) wychodzi dodatkowo +0x100 (0962 = 01.01.1970, 727C = 14.03.1996, B2EB = 22.04.1979).
+- Zmiana daty w menu nie zmienia żadnego innego rejestru. Po ustawieniu daty sterownik przez ok. 1–2 min nie wysyła 1620 (zegara).
+- Zapis daty przez 0x0431 działa inaczej niż menu (rok 2026 trzeba wysłać jako 18) i ma skutki uboczne (patrz wyżej) — **nie używać** do czasu wyjaśnienia.
