@@ -45,7 +45,7 @@ const char* password = SECRET_WIFI_PASSWORD;
 #define TechMode "1705" // 0 auto 1-odmrazanie 2-urlopowy
 #define TechPumpOnOff "1744" // zasilanie pompy 
 #define TechPumpPower "1757" // moc pompy
-#define FW_VERSION "2026.11.15-3" // podbijac przy kazdej zmianie
+#define FW_VERSION "2026.11.15-4" // podbijac przy kazdej zmianie
 #define TechTime "1620" // czas na sterowniku
 #define TechDate "17b9" // data na sterowniku: bity 15-11 dzien, 10-7 miesiac, 6-0 rok-2000
 #define TechPower "1b98" // uzysk chwilowy
@@ -174,6 +174,9 @@ unsigned long lastRawSummary = 0;
 bool discoverySent = false; // autowykrywanie HA wysylane raz po starcie (komunikaty sa retained) i po restarcie HA
 String rawAnnounced = ","; // rejestry, dla ktorych wyslano juz konfiguracje encji do HA
 int clockDriftState = -1; // -1 nieznany, 0 OK, 1 rozjechany (wysylane tylko przy zmianie)
+int dateDriftState = -1;  // data sterownika (17B9) inna niz dzisiejsza - encja "Data sterownika rozjechana"
+unsigned long dateMismatchSince = 0;
+#define DATE_DRIFT_DELAY 300000UL // alarm dopiero po 5 min roznicy (po ustawieniu daty 17B9 odswieza sie z opoznieniem)
 
 // przyczyna ostatniego restartu (ustalana raz w setup)
 String resetReason;
@@ -1313,6 +1316,7 @@ void MqttLoop()
 		}
 		if (millis() - lastDiag > 60000)
 		{
+			CheckDateDrift();
 			lastDiag = millis();
 			PublishDiag();
 		}
@@ -1497,6 +1501,35 @@ void PublishRawSummary()
 #endif
 }
 
+// Alarm "Data sterownika rozjechana": 17B9 rozni sie od dzisiejszej daty (NTP) dluzej niz 5 min.
+// Nic nie zapisuje do sterownika - date trzeba poprawic recznie.
+void CheckDateDrift()
+{
+	time_t now = time(nullptr);
+	if (now < 1600000000 || mypin.indexOf(TechDate) == -1)
+		return;
+	struct tm* t = localtime(&now);
+	if ((t->tm_hour == 23 && t->tm_min >= 50) || (t->tm_hour == 0 && t->tm_min < 15))
+		return; // okolice polnocy - sterownik zmienia date wg swojego zegara
+	long v = HexToLong(mypin[TechDate]);
+	bool ok = (v == DateValue(t, DATE_READ_YEAR_BASE) || v == DateValue(t, DATE_WRITE_YEAR_BASE));
+	int drift = 0;
+	if (ok)
+		dateMismatchSince = 0;
+	else
+	{
+		if (dateMismatchSince == 0)
+			dateMismatchSince = millis();
+		drift = (millis() - dateMismatchSince >= DATE_DRIFT_DELAY) ? 1 : 0;
+	}
+	if (drift != dateDriftState && mqtt.connected())
+	{
+		mqtt.publish(MQTT_BASE "/date_drift", drift ? "ON" : "OFF", true);
+		dateDriftState = drift;
+		SendLog(String("Data_sterownika_") + (drift ? "ROZJECHANA_" : "OK_") + ControllerDateText(v));
+	}
+}
+
 void PublishDiag()
 {
 	if (!mqtt.connected())
@@ -1566,6 +1599,9 @@ void PublishDiscovery()
 	PublishDiscoveryEntity("binary_sensor", "clock_drift", "Zegar rozjechany", "clock_drift",
 		",\"dev_cla\":\"problem\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:clock-alert-outline\"");
 	clockDriftState = -1; // po (ponownym) polaczeniu wyslij stan od nowa
+	PublishDiscoveryEntity("binary_sensor", "date_drift", "Data sterownika rozjechana", "date_drift",
+		",\"dev_cla\":\"problem\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"ent_cat\":\"diagnostic\",\"ic\":\"mdi:calendar-alert\"");
+	dateDriftState = -1;
 
 	// zegar sterownika tylko na stronie WWW (zmienia sie co minute - zasmiecal historie HA)
 	mqtt.publish(String("homeassistant/sensor/" + deviceId + "/clock/config").c_str(), "", true);
