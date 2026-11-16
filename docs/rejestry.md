@@ -172,3 +172,43 @@ Wniosek (poprawiony po dalszych testach): część „śmieciowych” dat **nie 
 - 17B9 = dzień·2048 + miesiąc·128 + (rok − 2000); dla lat sprzed 2000 (rok ujemny) wychodzi dodatkowo +0x100 (0962 = 01.01.1970, 727C = 14.03.1996, B2EB = 22.04.1979).
 - Zmiana daty w menu nie zmienia żadnego innego rejestru. Po ustawieniu daty sterownik przez ok. 1–2 min nie wysyła 1620 (zegara).
 - Zapis daty przez 0x0431 działa inaczej niż menu (rok 2026 trzeba wysłać jako 18) i ma skutki uboczne (patrz wyżej) — **nie używać** do czasu wyjaśnienia.
+
+## Testy zapisu daty 0x0431 — popołudnie 15.11.2026 (z wyłączoną korektą zegara)
+
+Po zapisie wyświetlacz (i 17B9) przechodzi przez kilka stanów, zanim się ustabilizuje (ok. 2,5 min, w tym czasie sterownik nie wysyła 1620):
+zapisana data → 00/00/00 (17B9 = 0x0030) → … → data końcowa.
+
+| Start (wyświetlacz) | Zapis | Zaraz po zapisie | Po drodze | Końcowo (17B9) |
+|---|---|---|---|---|
+| 14.03.1996 | 7D92 (15.11, pole roku 18) | 15/11/26 | 00/00/00, 24/12/06 | 14/03/96 (727C) |
+| 14.03.1996 | 8592 (16.11, pole roku 18) | ? | 00/00/00 | 15/03/96 (79E0) |
+| 14.03.1996 | 9BB1 (19.07, pole roku 49) | 19/07/01 | 00/00/00, 24/12/06 | 24/12/06 (C6A2) |
+
+Wnioski:
+- zaraz po zapisie dzień i miesiąc są zawsze takie, jak wysłane; rok = pole + 8 (dla pola 49 wyświetla się „01”),
+- po ok. 2,5 min sterownik datę „przelicza” i wychodzi inna — wcześniejsze „udane” zapisy z rana były najpewniej odczytami sprzed tego przeliczenia,
+- 17B9 po ustabilizowaniu pokazuje datę z wyświetlacza (dzień, miesiąc zgodne), ale pole roku dla lat sprzed 2000 / ostatnich zapisów jest kodowane niejednolicie (1996 jako 96 albo 124+przeniesienie, 2006 jako 162),
+- reguły przeliczania nie udało się ustalić — **zapisu 0x0431 nie używać**; datę ustawiać ręcznie, ESP tylko ostrzega (PR #40).
+
+## Zapis daty 0x0431 — rozwiązanie (15.11.2026, wieczór)
+
+Sesje z resetem sterownika przed każdą (A → X → E, odczyt po ~1/2/3 min, bez ustawiania zegara) pokazały, że przeliczenie jest **w pełni deterministyczne**. Zapisana data W (rok = 2008 + pole) po ~2,5 min zamienia się na:
+
+| Zapis (rok W) | Wynik | Format 17B9 |
+|---|---|---|
+| 2008 – 31.12.2055 | W − 11 204 dni (2045→2015, 2054→2024, 31.12.2055→28.04.2025) | A albo B |
+| od 15.01.2056 | W − 18 470 / 18 471 dni (2056→2005, 2077→2026) | B |
+
+- 18 470 przy zegarze sterownika wieczorem (~17:40), 18 471 ok. północy (sesja 1 przy 15:00 też +1 dzień) — zależy od godziny na zegarze.
+- Jeden bit = dokładnie rok albo miesiąc kalendarzowy; poprzedni stan daty nie ma wpływu.
+- **Zapis `5345` (10.06.2077) daje 15/11/26** (17B9 = 7E36). Zapis godziny (0x0298) potem daty nie psuje (sprawdzone).
+- Zapis daty i godziny w jednej ramce nic nie zmienia.
+
+Formaty odczytu 17B9 (dzień zawsze w bitach 15–11):
+
+- **A** (data z menu): `d·2048 + m·128 + (rok − 2000)` — 7D9A = 15.11.2026,
+- **B** (po zaniku zasilania i po zapisie 0x0431): `d·2048 + m·128 + rr + 156`, rr = rok dwucyfrowy — 0962 = 01.01.70, 727C = 14.03.96, BEA2 = 23.12.06, 7E36 = 15.11.26.
+
+Stulecia sterownik nie pokazuje (rok dwucyfrowy), a lata przestępne 1901–2099 wypadają tak samo, więc format B wystarcza. Gdy wartość pasuje do obu formatów, ESP wybiera datę bliższą dzisiejszej. Do sprawdzenia: czy dzień tygodnia (uzysk tygodniowy) liczy się w formacie B poprawnie.
+
+ESP (FW 2026.11.15-5, PR #42) zapisuje „dziś + 18 470 dni” i po każdej próbie koryguje przesunięcie o różnicę w dniach.
