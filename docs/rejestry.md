@@ -221,8 +221,7 @@ ESP (FW 2026.11.15-5, PR #42) zapisuje „dziś + 18 470 dni” i po każdej pr�
 | tygodniowy | 105 kWh | 20 °C | 10 °C | 10 h 20 min | 1B9A = 105 ✅ |
 | miesięczny | 464 kWh | 20 °C | 10 °C | 66 h 28 min | 1B9B = 464 ✅ |
 | roczny | 105 470 kWh | 34 °C | 10 °C | 28 h 56 min | 1B9C = 0x9BFE (młodsze słowo) ✅ |
+| całkowity | 12,22 MWh | 2693 °C (?) | 73 °C | 47777 h 20 min (lub 4777 h 20 min — 15.11 było 4773 h 21 min) | 1BA1 = 122 ❓ |
 
-- Uzyski w rejestrach zgadzają się z menu, więc ESP czyta je dobrze; dziwne zmiany tygodniowego/miesięcznego to obliczenia sterownika.
-- **Maksymalnych temperatur i czasów pracy pompy nie ma w ramkach.** Przeglądanie menu nie dodało żadnego nowego rejestru (dalej 192). Nie pasuje też żadna wartość (szukane 13/130, 620, 3988, 1736 min).
-- 1BA2 = 172 przy dziennym maksimum kolektora 13 °C i zbiornika 10 °C, więc hipoteza „dzienne maksima ×0,1 °C” odpada.
-- Statystyki roczne są niespójne: pompa 28 h 56 min w roku przy 66 h 28 min w miesiącu, maks. kolektor 34 °C w roku przy 83,9 °C 13.11. Najpewniej zepsuły je testy daty (sterownik zmieniał rok 1970/1996/2003/1906…). Uzysk roczny od 15.11 stoi na 105 470.
+- Całkowity: hipoteza **1BA1 = uzysk całkowity w 0,1 MWh** (122 = 12,2 MWh; 14.11 też 122). Do potwierdzenia, gdy licznik dojdzie do 12,25 MWh (powinno być 123). Wartości 12 220 / 1222 nie ma w żadnym rejestrze.
+- Maks. kolektor 2693 °C to najpewniej odczyt przy uszkodzonym/odłączonym czujniku kiedyś w przeszłości; maks. zbiornik 73 °C wygląda realnie.
