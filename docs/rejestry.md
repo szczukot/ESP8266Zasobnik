@@ -212,3 +212,17 @@ Formaty odczytu 17B9 (dzień zawsze w bitach 15–11):
 Stulecia sterownik nie pokazuje (rok dwucyfrowy), a lata przestępne 1901–2099 wypadają tak samo, więc format B wystarcza. Gdy wartość pasuje do obu formatów, ESP wybiera datę bliższą dzisiejszej. Do sprawdzenia: czy dzień tygodnia (uzysk tygodniowy) liczy się w formacie B poprawnie.
 
 ESP (FW 2026.11.15-5, PR #42) zapisuje „dziś + 18 470 dni” i po każdej próbie koryguje przesunięcie o różnicę w dniach.
+
+## Statystyki z menu sterownika (19.11.2026, ok. 15:10)
+
+| Okres | Uzysk | Maks. kolektor | Maks. zbiornik | Czas pracy pompy | Rejestr |
+|---|---|---|---|---|---|
+| dzienny | 0 (nie wyświetla) | 13 °C | 10 °C | – | 1B99 = 0 ✅ |
+| tygodniowy | 105 kWh | 20 °C | 10 °C | 10 h 20 min | 1B9A = 105 ✅ |
+| miesięczny | 464 kWh | 20 °C | 10 °C | 66 h 28 min | 1B9B = 464 ✅ |
+| roczny | 105 470 kWh | 34 °C | 10 °C | 28 h 56 min | 1B9C = 0x9BFE (młodsze słowo) ✅ |
+
+- Uzyski w rejestrach zgadzają się z menu, więc ESP czyta je dobrze; dziwne zmiany tygodniowego/miesięcznego to obliczenia sterownika.
+- **Maksymalnych temperatur i czasów pracy pompy nie ma w ramkach.** Przeglądanie menu nie dodało żadnego nowego rejestru (dalej 192). Nie pasuje też żadna wartość (szukane 13/130, 620, 3988, 1736 min).
+- 1BA2 = 172 przy dziennym maksimum kolektora 13 °C i zbiornika 10 °C, więc hipoteza „dzienne maksima ×0,1 °C” odpada.
+- Statystyki roczne są niespójne: pompa 28 h 56 min w roku przy 66 h 28 min w miesiącu, maks. kolektor 34 °C w roku przy 83,9 °C 13.11. Najpewniej zepsuły je testy daty (sterownik zmieniał rok 1970/1996/2003/1906…). Uzysk roczny od 15.11 stoi na 105 470.
